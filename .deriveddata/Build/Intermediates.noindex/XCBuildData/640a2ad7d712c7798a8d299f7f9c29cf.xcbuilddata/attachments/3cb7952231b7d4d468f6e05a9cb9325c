@@ -1,0 +1,88 @@
+{
+  "" : {
+    "diagnostics" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/ScoreWise-master.dia",
+    "emit-module-dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/ScoreWise-master-emit-module.d",
+    "emit-module-diagnostics" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/ScoreWise-master-emit-module.dia",
+    "swift-dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/ScoreWise-master.swiftdeps"
+  },
+  "/Users/alanoudalsamil/Documents/New project/ScoreWise/ScoreWiseApp/AppCore.swift" : {
+    "const-values" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/AppCore.swiftconstvalues",
+    "dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/AppCore.d",
+    "diagnostics" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/AppCore.dia",
+    "index-unit-output-path" : "/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/AppCore.o",
+    "llvm-bc" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/AppCore.bc",
+    "object" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/AppCore.o",
+    "swift-dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/AppCore.swiftdeps",
+    "swiftmodule" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/AppCore~partial.swiftmodule"
+  },
+  "/Users/alanoudalsamil/Documents/New project/ScoreWise/ScoreWiseApp/DesignSystem.swift" : {
+    "const-values" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/DesignSystem.swiftconstvalues",
+    "dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/DesignSystem.d",
+    "diagnostics" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/DesignSystem.dia",
+    "index-unit-output-path" : "/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/DesignSystem.o",
+    "llvm-bc" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/DesignSystem.bc",
+    "object" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/DesignSystem.o",
+    "swift-dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/DesignSystem.swiftdeps",
+    "swiftmodule" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/DesignSystem~partial.swiftmodule"
+  },
+  "/Users/alanoudalsamil/Documents/New project/ScoreWise/ScoreWiseApp/Models.swift" : {
+    "const-values" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Models.swiftconstvalues",
+    "dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Models.d",
+    "diagnostics" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Models.dia",
+    "index-unit-output-path" : "/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Models.o",
+    "llvm-bc" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Models.bc",
+    "object" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Models.o",
+    "swift-dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Models.swiftdeps",
+    "swiftmodule" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Models~partial.swiftmodule"
+  },
+  "/Users/alanoudalsamil/Documents/New project/ScoreWise/ScoreWiseApp/PDFExportService.swift" : {
+    "const-values" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/PDFExportService.swiftconstvalues",
+    "dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/PDFExportService.d",
+    "diagnostics" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/PDFExportService.dia",
+    "index-unit-output-path" : "/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/PDFExportService.o",
+    "llvm-bc" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/PDFExportService.bc",
+    "object" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/PDFExportService.o",
+    "swift-dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/PDFExportService.swiftdeps",
+    "swiftmodule" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/PDFExportService~partial.swiftmodule"
+  },
+  "/Users/alanoudalsamil/Documents/New project/ScoreWise/ScoreWiseApp/RankingEngine.swift" : {
+    "const-values" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/RankingEngine.swiftconstvalues",
+    "dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/RankingEngine.d",
+    "diagnostics" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/RankingEngine.dia",
+    "index-unit-output-path" : "/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/RankingEngine.o",
+    "llvm-bc" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/RankingEngine.bc",
+    "object" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/RankingEngine.o",
+    "swift-dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/RankingEngine.swiftdeps",
+    "swiftmodule" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/RankingEngine~partial.swiftmodule"
+  },
+  "/Users/alanoudalsamil/Documents/New project/ScoreWise/ScoreWiseApp/ScoreWiseApp.swift" : {
+    "const-values" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/ScoreWiseApp.swiftconstvalues",
+    "dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/ScoreWiseApp.d",
+    "diagnostics" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/ScoreWiseApp.dia",
+    "index-unit-output-path" : "/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/ScoreWiseApp.o",
+    "llvm-bc" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/ScoreWiseApp.bc",
+    "object" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/ScoreWiseApp.o",
+    "swift-dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/ScoreWiseApp.swiftdeps",
+    "swiftmodule" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/ScoreWiseApp~partial.swiftmodule"
+  },
+  "/Users/alanoudalsamil/Documents/New project/ScoreWise/ScoreWiseApp/Services.swift" : {
+    "const-values" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Services.swiftconstvalues",
+    "dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Services.d",
+    "diagnostics" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Services.dia",
+    "index-unit-output-path" : "/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Services.o",
+    "llvm-bc" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Services.bc",
+    "object" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Services.o",
+    "swift-dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Services.swiftdeps",
+    "swiftmodule" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Services~partial.swiftmodule"
+  },
+  "/Users/alanoudalsamil/Documents/New project/ScoreWise/ScoreWiseApp/Views.swift" : {
+    "const-values" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Views.swiftconstvalues",
+    "dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Views.d",
+    "diagnostics" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Views.dia",
+    "index-unit-output-path" : "/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Views.o",
+    "llvm-bc" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Views.bc",
+    "object" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Views.o",
+    "swift-dependencies" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Views.swiftdeps",
+    "swiftmodule" : "/Users/alanoudalsamil/Documents/New project/.deriveddata/Build/Intermediates.noindex/ScoreWise.build/Debug-iphoneos/ScoreWise.build/Objects-normal/arm64/Views~partial.swiftmodule"
+  }
+}

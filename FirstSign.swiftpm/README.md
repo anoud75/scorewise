@@ -1,0 +1,270 @@
+# First Sign - Screens 1, 2, and 3 (MVVM)
+
+This package contains the first three UI screens in MVVM style.
+
+## Assets to add
+Place your assets in `Resources/` with these names:
+
+- `background-meadow` (your landscape background image)
+- `left-sign-art` (the white hand pixel artwork for the left panel)
+- `loading-monitor` (the monitor icon image for loading screen)
+- `desktop-main-bg`
+- `desktop-window-my-computer`
+- `desktop-window-a1ula`
+- `desktop-icon-my-computer`
+- `desktop-icon-letters`
+- `desktop-icon-translator`
+- `desktop-icon-about`
+- `desktop-icon-explorer`
+- `desktop-icon-journaling`
+- `desktop-icon-flashcards`
+- `desktop-icon-messages`
+- `desktop-icon-trash`
+- `letters-window-base`
+- `letters-header-icon`
+- `letters-close-button`
+- `letters-card-a`
+- `letters-card-b`
+- `letters-card-c`
+- `letters-card-d`
+- `letters-card-e`
+- `letters-card-f`
+- `letters-card-g`
+- `letters-card-h`
+- `letters-card-i`
+- `letters-card-j`
+- `letters-card-k`
+- `letters-card-l`
+- `letters-card-m`
+- `letters-card-n`
+- `letters-card-o`
+- `letters-card-p`
+- `letters-card-q`
+- `letters-card-r`
+- `letters-card-s`
+- `letters-card-t`
+- `letters-card-u`
+- `letters-card-v`
+- `letters-card-w`
+- `letters-card-x`
+- `letters-card-y`
+- `letters-card-z`
+- `flashcards-window-base`
+- `flashcards-title-icon`
+- `flashcards-folder-colors`
+- `flashcards-folder-emotions`
+- `flashcards-folder-weather`
+- `flashcards-folder-numbers`
+- `flashcards-folder-months`
+- `flashcards-close-button` (optional)
+- `colors-window-base`
+- `colors-title-bar`
+- `colors-title-icon`
+- `colors-close-button`
+- `colors-scroll-bar`
+- `colors-card-pink`
+- `colors-card-green`
+- `colors-card-orange`
+- `colors-card-yellow`
+- `colors-card-tan`
+- `colors-card-gray`
+- `colors-card-red`
+- `colors-card-blue`
+- `colors-card-brown`
+- `colors-card-black`
+- `colors-card-white`
+- `colors-card-purple`
+- `emotions-window-base`
+- `emotions-title-bar`
+- `emotions-title-icon`
+- `emotions-close-button`
+- `emotions-scroll-bar`
+- `emotions-card-happy`
+- `emotions-card-shy`
+- `emotions-card-surprised`
+- `emotions-card-sad`
+- `emotions-card-mad`
+- `emotions-card-upset`
+- `emotions-card-confused`
+- `emotions-card-hurt`
+- `emotions-card-excited`
+- `emotions-card-laughter`
+- `emotions-card-love`
+- `emotions-card-scared`
+- `emotions-card-embarrassed`
+- `emotions-card-nervous`
+- `emotions-card-bored`
+- `weather-window-base`
+- `weather-title-bar`
+- `weather-title-icon`
+- `weather-close-button`
+- `weather-scroll-bar`
+- `weather-card-sunny`
+- `weather-card-rainy`
+- `weather-card-snowy`
+- `weather-card-windy`
+- `weather-card-cloudy`
+- `months-window-base`
+- `months-title-bar`
+- `months-title-icon`
+- `months-close-button`
+- `months-scroll-bar`
+- `months-card-january`
+- `months-card-february`
+- `months-card-march`
+- `months-card-april`
+- `months-card-may`
+- `months-card-june`
+- `months-card-july`
+- `months-card-august`
+- `months-card-september`
+- `months-card-october`
+- `months-card-november`
+- `months-card-december`
+- `numbers-window-base`
+- `numbers-title-bar`
+- `numbers-title-icon`
+- `numbers-close-button`
+- `numbers-scroll-bar`
+- `numbers-card-one`
+- `numbers-card-two`
+- `numbers-card-three`
+- `numbers-card-four`
+- `numbers-card-five`
+- `numbers-card-six`
+- `numbers-card-seven`
+- `numbers-card-eight`
+- `numbers-card-nine`
+- `numbers-card-ten`
+- `numbers-card-eleven`
+- `numbers-card-twelve`
+- `numbers-card-thirteen`
+- `numbers-card-fourteen`
+- `numbers-card-fifteen`
+- `numbers-card-sixteen`
+- `numbers-card-seventeen`
+- `numbers-card-eighteen`
+- `numbers-card-nineteen`
+- `numbers-card-twenty`
+- `translator-window-base`
+- `translator-title-bar`
+- `translator-title-icon`
+- `translator-close-button`
+- `translator-output-panel`
+- `translator-input-panel`
+- `translator-mode-switch`
+- `translator-scroll-bar`
+- `translator-fingerspell-a`
+- `translator-fingerspell-b`
+- `translator-fingerspell-c`
+- `translator-fingerspell-d`
+- `translator-fingerspell-e`
+- `translator-fingerspell-f`
+- `translator-fingerspell-g`
+- `translator-fingerspell-h`
+- `translator-fingerspell-i`
+- `translator-fingerspell-j`
+- `translator-fingerspell-k`
+- `translator-fingerspell-l`
+- `translator-fingerspell-m`
+- `translator-fingerspell-n`
+- `translator-fingerspell-o`
+- `translator-fingerspell-p`
+- `translator-fingerspell-q`
+- `translator-fingerspell-r`
+- `translator-fingerspell-s`
+- `translator-fingerspell-t`
+- `translator-fingerspell-u`
+- `translator-fingerspell-v`
+- `translator-fingerspell-w`
+- `translator-fingerspell-x`
+- `translator-fingerspell-y`
+- `translator-fingerspell-z`
+- `MobileNetV2.mlmodel`
+- `explorer-title-bar` (optional, fallback style exists)
+- `explorer-close-button` (optional)
+- `explorer-input-field` (optional)
+- `explorer-action-a` (optional)
+- `explorer-action-smile` (optional)
+- `explorer-action-camera` (optional)
+- `explorer-bottom-bar` (optional)
+- `explorer-window-placeholder` (optional)
+- `about-close-button` (optional)
+- `journaling-window-base` (optional, notebook background)
+- `journaling-close-button` (optional)
+
+SwiftUI will automatically load these by asset name.
+
+## Main files
+
+- `Sources/FirstSignApp.swift`
+- `Sources/Models/FirstSignIntroModel.swift`
+- `Sources/Features/Intro/FirstSignIntroViewModel.swift`
+- `Sources/Features/Intro/FirstSignIntroView.swift`
+- `Sources/Features/Loading/AppLoadingViewModel.swift`
+- `Sources/Features/Loading/AppLoadingView.swift`
+- `Sources/Features/AppFlow/AppFlowViewModel.swift`
+- `Sources/Features/Desktop/MainDesktopViewModel.swift`
+- `Sources/Features/Desktop/MainDesktopView.swift`
+- `Sources/Features/About/AboutViewModel.swift`
+- `Sources/Features/About/AboutView.swift`
+- `Sources/Features/Letters/LettersViewModel.swift`
+- `Sources/Features/Letters/LettersView.swift`
+- `Sources/Features/FlashCards/FlashCardsViewModel.swift`
+- `Sources/Features/FlashCards/FlashCardsView.swift`
+- `Sources/Features/FlashCards/ColorsFolderViewModel.swift`
+- `Sources/Features/FlashCards/ColorsFolderView.swift`
+- `Sources/Features/FlashCards/EmotionsFolderViewModel.swift`
+- `Sources/Features/FlashCards/EmotionsFolderView.swift`
+- `Sources/Features/FlashCards/WeatherFolderViewModel.swift`
+- `Sources/Features/FlashCards/WeatherFolderView.swift`
+- `Sources/Features/FlashCards/MonthsFolderViewModel.swift`
+- `Sources/Features/FlashCards/MonthsFolderView.swift`
+- `Sources/Features/FlashCards/NumbersFolderViewModel.swift`
+- `Sources/Features/FlashCards/NumbersFolderView.swift`
+- `Sources/Features/Translator/TranslatorViewModel.swift`
+- `Sources/Features/Translator/TranslatorView.swift`
+- `Sources/Features/Explorer/ExplorerViewModel.swift`
+- `Sources/Features/Explorer/ExplorerView.swift`
+- `Sources/Features/Journaling/JournalingViewModel.swift`
+- `Sources/Features/Journaling/JournalingView.swift`
+- `Sources/Services/ObjectClassifierService.swift`
+- `Sources/Services/FingerSpellingService.swift`
+- `Sources/Models/DesktopModels.swift`
+- `Sources/Design/PixelComponents.swift`
+
+## Current behavior
+
+- Pixel-style top window with close button.
+- Left gradient panel and logo text styling.
+- Right descriptive text block.
+- Bottom-right install button with a warped pressed animation.
+- `install` transitions to a black loading screen.
+- Loading screen shows icon + `Loading...` + segmented blue loading bar animation.
+- Loading completion auto-transitions to the desktop hub screen.
+- Desktop hub has right-side icon column and two windows shown initially.
+- `Explorer` icon opens the Explorer ML window and shows selected highlight.
+- `About` icon opens an About panel with close button and formatted app text.
+- `Dictionary` icon opens an alphabet viewer panel (A-Z, view only).
+- `FlashCards` icon opens a FlashCards folders window (UI-only phase).
+- In FlashCards, tapping `Colors` opens the Colors content window.
+- In FlashCards, tapping `Emotions` opens the Emotions content window.
+- In FlashCards, tapping `Weather` opens the Weather content window.
+- In FlashCards, tapping `Months` opens the Months content window.
+- In FlashCards, tapping `Numbers` opens the Numbers content window.
+- `Translator` icon opens a two-way translator window.
+- `Journaling` icon opens the notebook journal window.
+- Colors window supports: scroll area, bottom scroll-bar controls, and full-image preview with close.
+- Emotions window supports: scroll area, bottom scroll-bar controls, and full-image preview with close.
+- Weather window supports: scroll area, bottom scroll-bar controls, and full-image preview with close.
+- Months window supports: scroll area, bottom scroll-bar controls, and full-image preview with close.
+- Numbers window supports: scroll area, bottom scroll-bar controls, and full-image preview with close.
+- Translator supports both modes: English input -> fingerspelling image sequence, and fingerspell keyboard input -> English text output.
+- Both desktop windows support close button (`X`) and remain hidden after close.
+- Bottom taskbar is built in SwiftUI with a live local-time clock.
+- Explorer runs MobileNetV2 object classification from selected image.
+- Explorer supports live real-time camera detection and photo upload.
+- Detected object label is converted into finger-spelling letter sequence.
+- Journal text entry auto-converts typed English into a fingerspelling line directly below.
+
+Camera note: ensure camera permission text exists in app settings (`NSCameraUsageDescription`) so iOS can open camera.
