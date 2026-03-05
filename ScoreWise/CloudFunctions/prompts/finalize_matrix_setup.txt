@@ -1,0 +1,71 @@
+You are finalizing a Clarity AI conversation into a decision matrix setup.
+
+Input:
+- projectId: {{projectId}}
+- transcript: {{transcript}}
+- draft: {{draft}}
+- userProfile: {{userProfile}}
+
+Task:
+1. Build a structured decision brief from the full conversation.
+2. Preserve the user's real entities, option names, constraints, goals, and tensions.
+3. Infer 2-8 concrete options.
+4. Validate option comparability: options must be same decision type (candidate vs candidate, offer vs offer, etc.).
+5. Infer 3-8 high-quality suggested criteria that fit this exact decision.
+6. Detect hard constraints from transcript/draft (salary floor, location, visa, remote requirement) and include them in constraints.
+7. If 2 or more explicit options are present, do not add extra strategy options.
+8. Criteria should be specific, non-overlapping, and usable in a weighted matrix.
+9. Do not output generic placeholder options if the conversation already contains real options.
+
+Return JSON only in this exact shape:
+{
+  "decisionBrief": {
+    "summary": "string",
+    "inferredCategory": "career",
+    "detectedOptions": [
+      {
+        "id": "string",
+        "label": "string",
+        "type": "candidate|offer|school|vendor|generic_choice",
+        "description": "string",
+        "aiSuggested": true
+      }
+    ],
+    "goals": ["string"],
+    "constraints": ["string"],
+    "risks": ["string"],
+    "tensions": ["string"],
+    "suggestedCriteria": [
+      {
+        "name": "string",
+        "detail": "string",
+        "category": "string",
+        "weightPercent": 0
+      }
+    ]
+  },
+  "suggestedOptions": [
+    {
+      "id": "string",
+      "label": "string",
+      "type": "candidate|offer|school|vendor|generic_choice",
+      "description": "string",
+      "aiSuggested": true
+    }
+  ],
+  "suggestedCriteria": [
+    {
+      "name": "string",
+      "detail": "string",
+      "category": "string",
+      "weightPercent": 0
+    }
+  ]
+}
+
+Rules:
+- inferredCategory should be one of: career, finance, health, relationships, business, education, lifestyle, creativity
+- suggestedOptions should match the options detected in the brief
+- suggestedCriteria weights must sum to exactly 100
+- Never include negotiation/pilot/hybrid options unless explicitly provided by the user as primary options.
+- Never output generic placeholders (Vendor A/B, Option A/B) when explicit names are present.

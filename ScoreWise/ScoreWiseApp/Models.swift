@@ -85,6 +85,43 @@ enum BiasChallengeType: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum MessageRole: String, Codable, CaseIterable, Hashable, Identifiable {
+    case user
+    case assistant
+
+    var id: String { rawValue }
+}
+
+enum ChatCTAAction: String, Codable, CaseIterable, Hashable, Identifiable {
+    case setupOptions
+
+    var id: String { rawValue }
+}
+
+enum DecisionFramework: String, Codable, CaseIterable, Hashable, Identifiable {
+    case friendTest
+    case tenTenTen
+    case regretMinimization
+    case riskAssessment
+    case opportunityCost
+    case valuesAlignment
+    case reversibility
+    case costOfInaction
+    case socialProof
+    case energyTest
+
+    var id: String { rawValue }
+}
+
+enum ChatConversationPhase: String, Codable, CaseIterable, Hashable, Identifiable {
+    case opening
+    case collecting
+    case transitionReady
+    case completed
+
+    var id: String { rawValue }
+}
+
 enum ProjectStatus: String, Codable {
     case draft
     case final
@@ -211,33 +248,167 @@ struct ClarifyingQuestionAnswer: Codable, Hashable, Identifiable {
     var answer: String
 }
 
+enum DecisionOptionType: String, Codable, Hashable, CaseIterable, Identifiable {
+    case candidate
+    case offer
+    case school
+    case vendor
+    case genericChoice = "generic_choice"
+
+    var id: String { rawValue }
+}
+
 struct DecisionOptionSnapshot: Codable, Hashable, Identifiable {
     var id: String = UUID().uuidString
     var label: String
+    var type: DecisionOptionType
     var description: String?
     var aiSuggested: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
         case label
+        case type
         case description
         case aiSuggested
     }
 
-    init(id: String = UUID().uuidString, label: String, description: String?, aiSuggested: Bool) {
+    private enum LegacyCodingKeys: String, CodingKey {
+        case title
+    }
+
+    init(
+        id: String = UUID().uuidString,
+        label: String,
+        type: DecisionOptionType = .genericChoice,
+        description: String?,
+        aiSuggested: Bool
+    ) {
         self.id = id
         self.label = label
+        self.type = type
         self.description = description
         self.aiSuggested = aiSuggested
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
         id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
-        label = try container.decode(String.self, forKey: .label)
+        let decodedLabel = try container.decodeIfPresent(String.self, forKey: .label)
+            ?? legacy.decodeIfPresent(String.self, forKey: .title)
+            ?? ""
+        label = decodedLabel
+        type = try container.decodeIfPresent(DecisionOptionType.self, forKey: .type)
+            ?? Self.inferredType(from: decodedLabel)
         description = try container.decodeIfPresent(String.self, forKey: .description)
         aiSuggested = try container.decodeIfPresent(Bool.self, forKey: .aiSuggested) ?? true
     }
+
+    var isExplicitNamed: Bool {
+        let normalized = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return false }
+        if normalized.hasPrefix("vendor ") || normalized.hasPrefix("option ") || normalized.hasPrefix("candidate ") {
+            return false
+        }
+        return true
+    }
+
+    private static func inferredType(from label: String) -> DecisionOptionType {
+        let lower = label.lowercased()
+        if lower.contains("offer") || lower.contains("current job") || lower.contains("current role") {
+            return .offer
+        }
+        if lower.contains("candidate") {
+            return .candidate
+        }
+        if lower.contains("school") || lower.contains("university") || lower.contains("college") {
+            return .school
+        }
+        if lower.contains("vendor") || lower.contains("provider") {
+            return .vendor
+        }
+        return .genericChoice
+    }
+}
+
+struct DecisionBrief: Codable, Hashable {
+    var summary: String
+    var inferredCategory: DecisionCategory
+    var detectedOptions: [DecisionOptionSnapshot]
+    var goals: [String]
+    var constraints: [String]
+    var risks: [String]
+    var tensions: [String]
+    var suggestedCriteria: [CriterionDraft]
+}
+
+enum ConstraintType: String, Codable, Hashable, CaseIterable, Identifiable {
+    case minimumSalary = "minimum_salary"
+    case location
+    case visa
+    case remote
+    case custom
+
+    var id: String { rawValue }
+}
+
+struct ConstraintFinding: Codable, Hashable, Identifiable {
+    var id: String = UUID().uuidString
+    var type: ConstraintType
+    var rule: String
+    var violatedOptionIDs: [String]
+    var violatedOptionLabels: [String]
+    var severity: String
+}
+
+struct DecisionReport: Codable, Hashable {
+    var recommendation: String
+    var drivers: [String]
+    var risks: [String]
+    var confidence: String
+    var nextStep: String
+    var biasChecks: [String]
+}
+
+struct DecisionChatOption: Codable, Hashable, Identifiable {
+    var id: String = UUID().uuidString
+    var index: Int
+    var text: String
+}
+
+struct ChatMessageCTA: Codable, Hashable {
+    var title: String
+    var action: ChatCTAAction
+}
+
+struct DecisionChatMessage: Codable, Hashable, Identifiable {
+    var id: String = UUID().uuidString
+    var role: MessageRole
+    var content: String
+    var options: [DecisionChatOption]
+    var allowSkip: Bool
+    var allowsFreeformReply: Bool
+    var cta: ChatMessageCTA?
+    var framework: DecisionFramework?
+    var createdAt: Date
+    var isTypingPlaceholder: Bool
+}
+
+struct DecisionMatrixSetup: Codable, Hashable {
+    var decisionBrief: DecisionBrief
+    var suggestedOptions: [DecisionOptionSnapshot]
+    var suggestedCriteria: [CriterionDraft]
+}
+
+struct DecisionConversationState: Codable, Hashable {
+    var phase: ChatConversationPhase
+    var frameworksUsed: [DecisionFramework]
+}
+
+struct DecisionConversationResponse: Codable, Hashable {
+    var message: DecisionChatMessage
+    var conversationState: DecisionConversationState
 }
 
 struct BiasChallengeResponse: Codable, Hashable, Identifiable {
@@ -300,6 +471,17 @@ struct RankingDraft: Identifiable, Hashable, Codable {
     var usageContext: UsageContext
     var category: DecisionCategory
     var contextNarrative: String
+    var decisionBrief: DecisionBrief?
+    var chatThreadID: String?
+    var chatPhase: ChatConversationPhase
+    var chatCompletedAt: Date?
+    var conversationSummary: String
+    var frameworksUsed: [DecisionFramework]
+    var chatDerivedOptions: [DecisionOptionSnapshot]
+    var chatDerivedCriteria: [CriterionDraft]
+    var constraintFindings: [ConstraintFinding]?
+    var decisionReport: DecisionReport?
+    var alternativePathAnswer: String?
     var voiceInputURL: String?
     var contextAttachments: [VendorAttachment]
     var clarifyingQuestions: [ClarifyingQuestionAnswer]
@@ -307,6 +489,7 @@ struct RankingDraft: Identifiable, Hashable, Codable {
     var criteria: [CriterionDraft]
     var scores: [ScoreDraft]
     var biasChallenges: [BiasChallengeResponse]
+    var postChallengeReassurance: String?
     var decisionStatus: DecisionStatus
     var chosenOptionID: String?
     var followUpDate: Date?
@@ -320,12 +503,23 @@ struct RankingDraft: Identifiable, Hashable, Codable {
             usageContext: .work,
             category: .business,
             contextNarrative: "",
+            decisionBrief: nil,
+            chatThreadID: nil,
+            chatPhase: .opening,
+            chatCompletedAt: nil,
+            conversationSummary: "",
+            frameworksUsed: [],
+            chatDerivedOptions: [],
+            chatDerivedCriteria: [],
+            constraintFindings: [],
+            decisionReport: nil,
+            alternativePathAnswer: nil,
             voiceInputURL: nil,
             contextAttachments: [],
             clarifyingQuestions: [],
             vendors: [
-                VendorDraft(name: "Vendor A", notes: "", attachments: []),
-                VendorDraft(name: "Vendor B", notes: "", attachments: [])
+                VendorDraft(name: "", notes: "", attachments: []),
+                VendorDraft(name: "", notes: "", attachments: [])
             ],
             criteria: [
                 CriterionDraft(name: "Cost", detail: "Overall expected cost", category: "Financial", weightPercent: 34),
@@ -334,6 +528,7 @@ struct RankingDraft: Identifiable, Hashable, Codable {
             ],
             scores: [],
             biasChallenges: [],
+            postChallengeReassurance: nil,
             decisionStatus: .inProgress,
             chosenOptionID: nil,
             followUpDate: nil,
@@ -637,11 +832,30 @@ final class InsightReportEntity {
 final class ChatThreadEntity {
     @Attribute(.unique) var id: String
     var projectID: String
+    var phaseRaw: String
+    var isComplete: Bool
+    var projectTitle: String
+    var lastMessageAt: Date
+    var frameworksJSON: String
     var createdAt: Date
 
-    init(id: String, projectID: String, createdAt: Date = .now) {
+    init(
+        id: String,
+        projectID: String,
+        phaseRaw: String = ChatConversationPhase.opening.rawValue,
+        isComplete: Bool = false,
+        projectTitle: String = "",
+        lastMessageAt: Date = .now,
+        frameworksJSON: String = "[]",
+        createdAt: Date = .now
+    ) {
         self.id = id
         self.projectID = projectID
+        self.phaseRaw = phaseRaw
+        self.isComplete = isComplete
+        self.projectTitle = projectTitle
+        self.lastMessageAt = lastMessageAt
+        self.frameworksJSON = frameworksJSON
         self.createdAt = createdAt
     }
 }
@@ -652,13 +866,40 @@ final class ChatMessageEntity {
     var threadID: String
     var role: String
     var content: String
+    var optionsJSON: String
+    var allowSkip: Bool
+    var allowsFreeformReply: Bool
+    var ctaJSON: String
+    var frameworkRaw: String?
+    var sequenceNumber: Int
+    var isTypingPlaceholder: Bool
     var createdAt: Date
 
-    init(id: String, threadID: String, role: String, content: String, createdAt: Date = .now) {
+    init(
+        id: String,
+        threadID: String,
+        role: String,
+        content: String,
+        optionsJSON: String = "[]",
+        allowSkip: Bool = false,
+        allowsFreeformReply: Bool = false,
+        ctaJSON: String = "",
+        frameworkRaw: String? = nil,
+        sequenceNumber: Int = 0,
+        isTypingPlaceholder: Bool = false,
+        createdAt: Date = .now
+    ) {
         self.id = id
         self.threadID = threadID
         self.role = role
         self.content = content
+        self.optionsJSON = optionsJSON
+        self.allowSkip = allowSkip
+        self.allowsFreeformReply = allowsFreeformReply
+        self.ctaJSON = ctaJSON
+        self.frameworkRaw = frameworkRaw
+        self.sequenceNumber = sequenceNumber
+        self.isTypingPlaceholder = isTypingPlaceholder
         self.createdAt = createdAt
     }
 }
