@@ -6,7 +6,7 @@ ScoreWise is an iOS app for high-confidence vendor decisions using weighted scor
 - SwiftUI + MVVM
 - SwiftData (local cache/offline drafts)
 - Firebase-ready service layer (Auth, Firestore, Storage, Functions)
-- Cloud Functions templates for OpenAI integration
+- Cloud Functions templates for Gemini integration
 
 ## Implemented
 - Auth screen (Apple/Google/Email UX scaffolding)
@@ -41,4 +41,4 @@ Open: `ScoreWise/ScoreWise.xcodeproj`
 1. Add Firebase iOS SDK packages in Xcode project settings (Auth/Firestore/Functions/Storage).
 2. Add `GoogleService-Info.plist` to app target.
 3. Enable providers: Apple, Google, Email.
-4. Deploy `CloudFunctions/` and set `OPENAI_API_KEY`.
+4. Deploy `CloudFunctions/` and set `GEMINI_API_KEY`.

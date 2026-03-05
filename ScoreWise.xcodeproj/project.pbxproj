@@ -18,6 +18,21 @@
 		A10000090000000000000001 /* RankingEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000090000000000000001 /* RankingEngineTests.swift */; };
 		A100000A0000000000000001 /* SurveyTaggerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000A0000000000000001 /* SurveyTaggerTests.swift */; };
 		A100000B0000000000000001 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A200000B0000000000000001 /* XCTest.framework */; };
+		A100000C0000000000000001 /* DecisionEngineTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000C0000000000000001 /* DecisionEngineTypes.swift */; };
+		A100000D0000000000000001 /* DecisionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000D0000000000000001 /* DecisionEngine.swift */; };
+		A100000E0000000000000001 /* DecisionEngineParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000E0000000000000001 /* DecisionEngineParsingTests.swift */; };
+		A100000F0000000000000001 /* DecisionEngineConstraintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000F0000000000000001 /* DecisionEngineConstraintTests.swift */; };
+		A10000100000000000000001 /* DecisionEngineMatrixTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000100000000000000001 /* DecisionEngineMatrixTests.swift */; };
+		A10000110000000000000001 /* SituationParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000110000000000000001 /* SituationParser.swift */; };
+		A10000120000000000000001 /* OptionExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000120000000000000001 /* OptionExtractor.swift */; };
+		A10000130000000000000001 /* ConstraintDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000130000000000000001 /* ConstraintDetector.swift */; };
+		B10000010000000000000001 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = B20000010000000000000001 /* GoogleService-Info.plist */; };
+		B10000020000000000000001 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = B50000010000000000000001 /* FirebaseAuth */; };
+		B10000030000000000000001 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = B50000020000000000000001 /* FirebaseCore */; };
+		B10000040000000000000001 /* FirebaseFunctions in Frameworks */ = {isa = PBXBuildFile; productRef = B50000030000000000000001 /* FirebaseFunctions */; };
+		B10000050000000000000001 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = B50000040000000000000001 /* FirebaseFirestore */; };
+		B10000060000000000000001 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = B50000050000000000000001 /* FirebaseStorage */; };
+		B10000070000000000000001 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = B50000060000000000000001 /* GoogleSignIn */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -44,6 +59,17 @@
 		A20000090000000000000001 /* RankingEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RankingEngineTests.swift; sourceTree = "<group>"; };
 		A200000A0000000000000001 /* SurveyTaggerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurveyTaggerTests.swift; sourceTree = "<group>"; };
 		A200000B0000000000000001 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+		A200000C0000000000000001 /* DecisionEngineTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionEngineTypes.swift; sourceTree = "<group>"; };
+		A200000D0000000000000001 /* DecisionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionEngine.swift; sourceTree = "<group>"; };
+		A200000E0000000000000001 /* DecisionEngineParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionEngineParsingTests.swift; sourceTree = "<group>"; };
+		A200000F0000000000000001 /* DecisionEngineConstraintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionEngineConstraintTests.swift; sourceTree = "<group>"; };
+		A20000100000000000000001 /* DecisionEngineMatrixTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DecisionEngineMatrixTests.swift; sourceTree = "<group>"; };
+		A20000110000000000000001 /* SituationParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SituationParser.swift; sourceTree = "<group>"; };
+		A20000120000000000000001 /* OptionExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OptionExtractor.swift; sourceTree = "<group>"; };
+		A20000130000000000000001 /* ConstraintDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConstraintDetector.swift; sourceTree = "<group>"; };
+		B20000010000000000000001 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = GoogleService-Info.plist; sourceTree = "<group>"; };
+		B20000020000000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B20000030000000000000001 /* ScoreWise.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ScoreWise.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,6 +77,12 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B10000020000000000000001 /* FirebaseAuth in Frameworks */,
+				B10000030000000000000001 /* FirebaseCore in Frameworks */,
+				B10000040000000000000001 /* FirebaseFunctions in Frameworks */,
+				B10000050000000000000001 /* FirebaseFirestore in Frameworks */,
+				B10000060000000000000001 /* FirebaseStorage in Frameworks */,
+				B10000070000000000000001 /* GoogleSignIn in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,11 +110,15 @@
 		A70000020000000000000001 /* ScoreWiseApp */ = {
 			isa = PBXGroup;
 			children = (
+				B20000020000000000000001 /* Info.plist */,
+				B20000010000000000000001 /* GoogleService-Info.plist */,
+				B20000030000000000000001 /* ScoreWise.entitlements */,
 				A20000010000000000000001 /* ScoreWiseApp.swift */,
 				A20000020000000000000001 /* AppCore.swift */,
 				A20000030000000000000001 /* Models.swift */,
 				A20000040000000000000001 /* RankingEngine.swift */,
 				A20000050000000000000001 /* Services.swift */,
+				A70000060000000000000001 /* DecisionEngine */,
 				A20000060000000000000001 /* PDFExportService.swift */,
 				A20000070000000000000001 /* DesignSystem.swift */,
 				A20000080000000000000001 /* Views.swift */,
@@ -95,8 +131,23 @@
 			children = (
 				A20000090000000000000001 /* RankingEngineTests.swift */,
 				A200000A0000000000000001 /* SurveyTaggerTests.swift */,
+				A200000E0000000000000001 /* DecisionEngineParsingTests.swift */,
+				A200000F0000000000000001 /* DecisionEngineConstraintTests.swift */,
+				A20000100000000000000001 /* DecisionEngineMatrixTests.swift */,
 			);
 			path = ScoreWiseTests;
+			sourceTree = "<group>";
+		};
+		A70000060000000000000001 /* DecisionEngine */ = {
+			isa = PBXGroup;
+			children = (
+				A200000C0000000000000001 /* DecisionEngineTypes.swift */,
+				A200000D0000000000000001 /* DecisionEngine.swift */,
+				A20000110000000000000001 /* SituationParser.swift */,
+				A20000120000000000000001 /* OptionExtractor.swift */,
+				A20000130000000000000001 /* ConstraintDetector.swift */,
+			);
+			path = DecisionEngine;
 			sourceTree = "<group>";
 		};
 		A70000040000000000000001 /* Frameworks */ = {
@@ -132,6 +183,14 @@
 			dependencies = (
 			);
 			name = ScoreWise;
+			packageProductDependencies = (
+				B50000010000000000000001 /* FirebaseAuth */,
+				B50000020000000000000001 /* FirebaseCore */,
+				B50000030000000000000001 /* FirebaseFunctions */,
+				B50000040000000000000001 /* FirebaseFirestore */,
+				B50000050000000000000001 /* FirebaseStorage */,
+				B50000060000000000000001 /* GoogleSignIn */,
+			);
 			productName = ScoreWise;
 			productReference = A20000000000000000000001 /* ScoreWise.app */;
 			productType = "com.apple.product-type.application";
@@ -182,6 +241,10 @@
 				Base,
 			);
 			mainGroup = A70000010000000000000001;
+			packageReferences = (
+				B40000010000000000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				B40000020000000000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+			);
 			productRefGroup = A70000050000000000000001 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -197,6 +260,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B10000010000000000000001 /* GoogleService-Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -219,6 +283,11 @@
 				A10000030000000000000001 /* Models.swift in Sources */,
 				A10000040000000000000001 /* RankingEngine.swift in Sources */,
 				A10000050000000000000001 /* Services.swift in Sources */,
+				A100000C0000000000000001 /* DecisionEngineTypes.swift in Sources */,
+				A100000D0000000000000001 /* DecisionEngine.swift in Sources */,
+				A10000110000000000000001 /* SituationParser.swift in Sources */,
+				A10000120000000000000001 /* OptionExtractor.swift in Sources */,
+				A10000130000000000000001 /* ConstraintDetector.swift in Sources */,
 				A10000060000000000000001 /* PDFExportService.swift in Sources */,
 				A10000070000000000000001 /* DesignSystem.swift in Sources */,
 				A10000080000000000000001 /* Views.swift in Sources */,
@@ -231,6 +300,9 @@
 			files = (
 				A10000090000000000000001 /* RankingEngineTests.swift in Sources */,
 				A100000A0000000000000001 /* SurveyTaggerTests.swift in Sources */,
+				A100000E0000000000000001 /* DecisionEngineParsingTests.swift in Sources */,
+				A100000F0000000000000001 /* DecisionEngineConstraintTests.swift in Sources */,
+				A10000100000000000000001 /* DecisionEngineMatrixTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -290,15 +362,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_ENTITLEMENTS = ScoreWiseApp/ScoreWise.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 6ZJ272TZ94;
+				ENABLE_TESTABILITY = YES;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "ScoreWise uses the microphone to transcribe your decision context.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "ScoreWise uses speech recognition to turn your voice brief into text.";
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ScoreWiseApp/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -317,15 +388,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_ENTITLEMENTS = ScoreWiseApp/ScoreWise.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 6ZJ272TZ94;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "ScoreWise uses the microphone to transcribe your decision context.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "ScoreWise uses speech recognition to turn your voice brief into text.";
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ScoreWiseApp/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -407,6 +476,58 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B40000010000000000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.0.0;
+			};
+		};
+		B40000020000000000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B50000010000000000000001 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B40000010000000000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		B50000020000000000000001 /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B40000010000000000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
+		};
+		B50000030000000000000001 /* FirebaseFunctions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B40000010000000000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFunctions;
+		};
+		B50000040000000000000001 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B40000010000000000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+		B50000050000000000000001 /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B40000010000000000000001 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseStorage;
+		};
+		B50000060000000000000001 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B40000020000000000000001 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A40000010000000000000001 /* Project object */;
 }

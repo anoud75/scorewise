@@ -1,11 +1,24 @@
 import SwiftUI
 import SwiftData
+#if canImport(UIKit)
+import UIKit
+#endif
+#if canImport(GoogleSignIn)
+import GoogleSignIn
+#endif
 
 @main
 struct ScoreWiseApp: App {
     @StateObject private var viewModel = AppViewModel()
+    #if canImport(UIKit)
+    @UIApplicationDelegateAdaptor(ScoreWiseAppDelegate.self) private var appDelegate
+    #endif
 
     var sharedModelContainer: ModelContainer = AppModelContainer.makeShared()
+
+    init() {
+        FirebaseBootstrap.configureIfPossible()
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -15,6 +28,24 @@ struct ScoreWiseApp: App {
         .modelContainer(sharedModelContainer)
     }
 }
+
+#if canImport(UIKit)
+final class ScoreWiseAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        #if canImport(GoogleSignIn)
+        let googleSchemes = (Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]])?
+            .flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] } ?? []
+
+        guard let scheme = url.scheme, googleSchemes.contains(where: { $0.caseInsensitiveCompare(scheme) == .orderedSame }) else {
+            return false
+        }
+        return GIDSignIn.sharedInstance.handle(url)
+        #else
+        return false
+        #endif
+    }
+}
+#endif
 
 private enum AppModelContainer {
     static func makeShared() -> ModelContainer {

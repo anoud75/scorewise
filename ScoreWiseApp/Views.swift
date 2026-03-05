@@ -3,6 +3,7 @@ import SwiftData
 import UniformTypeIdentifiers
 import Speech
 import AVFoundation
+import UIKit
 
 private enum ClarityPalette {
     static let background = Color(red: 0.96, green: 0.96, blue: 0.95)
@@ -16,7 +17,7 @@ private enum ClarityPalette {
 }
 
 private enum ClarityCopy {
-    static let appName = "ScoreWise"
+    static let appName = "Clarity AI"
     static let promiseTitle = "Think clearer.\nDecide better."
     static let promiseSubtitle = "A strategic AI that helps you see trade-offs, risks, and blind spots"
 }
@@ -66,8 +67,11 @@ struct RootView: View {
                         HomeView()
                     case .history:
                         HistoryView()
+                    case .decisionChat:
+                        DecisionChatView()
                     case .ranking:
                         RankingWizardView()
+                            .id(vm.activeDraft.id)
                     case .results:
                         ResultsView()
                     case .profile:
@@ -87,14 +91,22 @@ struct RootView: View {
         }
         .task {
             if vm.screen == .launch {
-                vm.bootstrap()
+                vm.bootstrap(modelContext: modelContext)
             }
         }
         .onAppear {
-            vm.loadRecent(modelContext: modelContext)
+            if vm.session != nil {
+                vm.restorePersistedSessionState(modelContext: modelContext)
+            } else {
+                vm.loadRecent(modelContext: modelContext)
+            }
         }
         .onChange(of: vm.session?.userID) { _, _ in
-            vm.loadRecent(modelContext: modelContext)
+            if vm.session != nil {
+                vm.restorePersistedSessionState(modelContext: modelContext)
+            } else {
+                vm.loadRecent(modelContext: modelContext)
+            }
         }
         .overlay {
             if let busyMessage = vm.busyMessage {
@@ -209,6 +221,8 @@ private struct AuthView: View {
     @State private var confirmPassword = ""
     @State private var showPassword = false
     @State private var showConfirmPassword = false
+    @State private var showEmailSignUpForm = false
+    @State private var showEmailSignInForm = false
 
     var body: some View {
         VStack {
@@ -272,80 +286,238 @@ private struct AuthView: View {
 
     private var signUpScreen: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Step 1 of 3")
-                    .font(ClarityType.caption)
-                    .foregroundStyle(ClarityPalette.inkSoft)
+            VStack(alignment: .leading, spacing: 18) {
+                authHeader(stepText: "Step 1 of 3")
 
-                Text("Create your\naccount")
-                    .font(ClarityType.heroSerif)
-                    .foregroundStyle(ClarityPalette.ink)
-                    .lineSpacing(-3)
+                VStack(spacing: 12) {
+                    Text("Create account")
+                        .font(.system(size: 42, weight: .bold, design: .serif))
+                        .foregroundStyle(ClarityPalette.ink)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                inputField("First name", text: $firstName)
-                inputField("Last name", text: $lastName)
-                inputField("Email address", text: $email, keyboard: .emailAddress, capitalization: .never)
-                secureField("Password", text: $password, visible: $showPassword)
-                secureField("Confirm password", text: $confirmPassword, visible: $showConfirmPassword)
+                    Text("Save decisions, sync progress, and come back later.")
+                        .font(ClarityType.title)
+                        .foregroundStyle(ClarityPalette.inkSoft)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                Button("Create Account") {
-                    let fullName = "\(firstName) \(lastName)".trimmingCharacters(in: .whitespaces)
-                    guard !email.trimmed.isEmpty, !password.isEmpty, password == confirmPassword, !fullName.isEmpty else {
-                        return
+                    authProviderActions
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showEmailSignUpForm = true
+                        }
+                    } label: {
+                        Text("Continue with email")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(ClarityPalette.ink)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 18)
+                            .background(ClarityPalette.surface, in: Capsule(style: .continuous))
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .stroke(ClarityPalette.line, lineWidth: 1)
+                            )
                     }
-                    vm.createAccount(email: email.trimmed, password: password, fullName: fullName)
+                    .buttonStyle(.plain)
+                    .opacity(showEmailSignUpForm ? 0.72 : 1)
+
+                    if showEmailSignUpForm {
+                        VStack(spacing: 12) {
+                            authDivider(label: "OR CREATE WITH EMAIL")
+
+                            HStack(spacing: 12) {
+                                inputField("First name", text: $firstName)
+                                inputField("Last name", text: $lastName)
+                            }
+
+                            inputField("Email address", text: $email, keyboard: .emailAddress, capitalization: .never)
+                            secureField("Password", text: $password, visible: $showPassword)
+                            secureField("Confirm password", text: $confirmPassword, visible: $showConfirmPassword)
+
+                            Button("Create Account") {
+                                let fullName = "\(firstName) \(lastName)".trimmingCharacters(in: .whitespaces)
+                                guard !email.trimmed.isEmpty, !password.isEmpty, password == confirmPassword, !fullName.isEmpty else {
+                                    return
+                                }
+                                vm.createAccount(email: email.trimmed, password: password, fullName: fullName)
+                            }
+                            .buttonStyle(ClarityPrimaryButtonStyle())
+                            .disabled(!canCreateAccount)
+                            .opacity(canCreateAccount ? 1 : 0.55)
+                        }
+                    }
                 }
-                .buttonStyle(ClarityPrimaryButtonStyle())
-                .disabled(!canCreateAccount)
-                .opacity(canCreateAccount ? 1 : 0.55)
 
                 Button {
                     mode = .signIn
+                    showEmailSignInForm = false
                 } label: {
                     Text("Already have an account?") + Text(" Log In").underline()
                 }
                 .font(ClarityType.body)
                 .foregroundStyle(ClarityPalette.ink)
                 .frame(maxWidth: .infinity)
+
+                authFootnote
             }
             .padding(.vertical, 6)
         }
     }
 
     private var signInScreen: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Spacer(minLength: 20)
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 18) {
+                authHeader()
 
-            Text("Welcome\nback")
-                .font(ClarityType.heroSerif)
+                VStack(spacing: 12) {
+                    Text("Log in")
+                        .font(.system(size: 42, weight: .bold, design: .serif))
+                        .foregroundStyle(ClarityPalette.ink)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text("Pick up where you left off and keep your decisions in sync.")
+                        .font(ClarityType.title)
+                        .foregroundStyle(ClarityPalette.inkSoft)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    authProviderActions
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showEmailSignInForm = true
+                        }
+                    } label: {
+                        Text("Continue with email")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(ClarityPalette.ink)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 18)
+                            .background(ClarityPalette.surface, in: Capsule(style: .continuous))
+                            .overlay(
+                                Capsule(style: .continuous)
+                                    .stroke(ClarityPalette.line, lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(showEmailSignInForm ? 0.72 : 1)
+
+                    if showEmailSignInForm {
+                        VStack(spacing: 12) {
+                            authDivider(label: "OR LOG IN WITH EMAIL")
+
+                            inputField("Email address", text: $email, keyboard: .emailAddress, capitalization: .never)
+                            secureField("Password", text: $password, visible: $showPassword)
+
+                            Button("Log In") {
+                                vm.signInEmail(email: email.trimmed, password: password)
+                            }
+                            .buttonStyle(ClarityPrimaryButtonStyle())
+                            .disabled(email.trimmed.isEmpty || password.isEmpty)
+                            .opacity(email.trimmed.isEmpty || password.isEmpty ? 0.55 : 1)
+                        }
+                    }
+                }
+
+                Button {
+                    mode = .signUp
+                    showEmailSignUpForm = false
+                } label: {
+                    Text("Don't have an account?") + Text(" Sign Up").underline()
+                }
+                .font(ClarityType.body)
                 .foregroundStyle(ClarityPalette.ink)
-                .lineSpacing(-3)
+                .frame(maxWidth: .infinity)
 
-            inputField("Email address", text: $email, keyboard: .emailAddress, capitalization: .never)
-            secureField("Password", text: $password, visible: $showPassword)
-
-            Spacer()
-
-            Button("Log In") {
-                vm.signInEmail(email: email.trimmed, password: password)
+                authFootnote
             }
-            .buttonStyle(ClarityPrimaryButtonStyle())
-            .disabled(email.trimmed.isEmpty || password.isEmpty)
-            .opacity(email.trimmed.isEmpty || password.isEmpty ? 0.55 : 1)
-
-            Button {
-                mode = .signUp
-            } label: {
-                Text("Don't have an account?") + Text(" Sign Up").underline()
-            }
-            .font(ClarityType.body)
-            .foregroundStyle(ClarityPalette.ink)
-            .frame(maxWidth: .infinity)
         }
     }
 
     private var canCreateAccount: Bool {
         !firstName.trimmed.isEmpty && !lastName.trimmed.isEmpty && !email.trimmed.isEmpty && !password.isEmpty && password == confirmPassword
+    }
+
+    private var authProviderActions: some View {
+        VStack(spacing: 12) {
+            Button {
+                vm.signInWithApple()
+            } label: {
+                authProviderLabel(title: "Continue with Apple", icon: {
+                    Image(systemName: "applelogo")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(ClarityPalette.ink)
+                })
+            }
+            .buttonStyle(ClarityAuthProviderButtonStyle())
+
+            Button {
+                vm.signInWithGoogle()
+            } label: {
+                authProviderLabel(title: "Continue with Google", icon: {
+                    GoogleAuthIcon()
+                })
+            }
+            .buttonStyle(ClarityAuthProviderButtonStyle())
+        }
+    }
+
+    private func authDivider(label: String = "OR") -> some View {
+        HStack(spacing: 12) {
+            Rectangle()
+                .fill(ClarityPalette.line)
+                .frame(height: 1)
+            Text(label)
+                .font(ClarityType.caption)
+                .foregroundStyle(ClarityPalette.inkSoft)
+            Rectangle()
+                .fill(ClarityPalette.line)
+                .frame(height: 1)
+        }
+    }
+
+    private var authFootnote: some View {
+        Text("By continuing, you agree to the Terms and Privacy Policy.")
+            .font(.system(size: 14, weight: .regular))
+            .foregroundStyle(ClarityPalette.inkSoft)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 4)
+    }
+
+    private func authHeader(stepText: String? = nil) -> some View {
+        HStack(alignment: .center) {
+            if let stepText {
+                Text(stepText)
+                    .font(ClarityType.caption)
+                    .foregroundStyle(ClarityPalette.inkSoft)
+            } else {
+                Spacer()
+                    .frame(width: 1, height: 1)
+            }
+
+            Spacer()
+
+            Button("Skip") {
+                vm.continueAsGuest()
+            }
+            .font(ClarityType.caption)
+            .foregroundStyle(ClarityPalette.ink)
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 4)
+    }
+
+    private func authProviderLabel<Icon: View>(title: String, @ViewBuilder icon: () -> Icon) -> some View {
+        HStack(spacing: 14) {
+            icon()
+                .frame(width: 22, height: 22)
+            Text(title)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(ClarityPalette.ink)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func inputField(
@@ -370,15 +542,11 @@ private struct AuthView: View {
 
     private func secureField(_ placeholder: String, text: Binding<String>, visible: Binding<Bool>) -> some View {
         HStack(spacing: 10) {
-            Group {
-                if visible.wrappedValue {
-                    TextField(placeholder, text: text)
-                } else {
-                    SecureField(placeholder, text: text)
-                }
-            }
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
+            ClarityPasswordTextField(
+                placeholder: placeholder,
+                text: text
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Button {
                 visible.wrappedValue.toggle()
@@ -387,6 +555,8 @@ private struct AuthView: View {
                     .foregroundStyle(ClarityPalette.inkSoft)
             }
             .buttonStyle(.plain)
+            .opacity(0.45)
+            .disabled(true)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 15)
@@ -396,6 +566,44 @@ private struct AuthView: View {
                 .stroke(ClarityPalette.line, lineWidth: 1)
         )
         .font(ClarityType.body)
+    }
+}
+
+private struct ClarityAuthProviderButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 22)
+            .padding(.vertical, 18)
+            .background(Color.white, in: Capsule(style: .continuous))
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color.black.opacity(0.08), lineWidth: 1)
+            )
+            .scaleEffect(configuration.isPressed ? 0.99 : 1)
+            .opacity(configuration.isPressed ? 0.92 : 1)
+    }
+}
+
+private struct GoogleAuthIcon: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.white)
+            Text("G")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.26, green: 0.52, blue: 0.96),
+                            Color(red: 0.20, green: 0.72, blue: 0.29),
+                            Color(red: 0.98, green: 0.74, blue: 0.18),
+                            Color(red: 0.91, green: 0.30, blue: 0.24)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        }
     }
 }
 
@@ -609,13 +817,13 @@ private struct OnboardingSurveyView: View {
                 Text("Select 2")
                     .font(ClarityType.body)
                     .foregroundStyle(ClarityPalette.inkSoft)
-                    .frame(maxWidth: .infinity)
             } else if stepIndex == 5 {
                 Text("Select at least 2")
                     .font(ClarityType.body)
                     .foregroundStyle(ClarityPalette.inkSoft)
-                    .frame(maxWidth: .infinity)
             }
+
+            Spacer()
 
             Button(stepIndex == steps - 1 ? "Done" : "Next") {
                 if stepIndex == steps - 1 {
@@ -853,6 +1061,7 @@ private struct HomeView: View {
     @EnvironmentObject private var vm: AppViewModel
     @StateObject private var transcriber = SpeechTranscriber()
     @State private var narrative = ""
+    @State private var narrativeWarning: String?
 
     private let contextTags = ["Product / Business", "Career move", "Personal priorities"]
 
@@ -911,20 +1120,24 @@ private struct HomeView: View {
                         .textInputAutocapitalization(.sentences)
 
                     Button {
-                        Task {
-                            if transcriber.isRecording {
-                                transcriber.stop()
-                                if !transcriber.transcript.isEmpty {
-                                    if !narrative.isEmpty { narrative += " " }
-                                    narrative += transcriber.transcript
-                                    transcriber.clearTranscript()
+                        if narrative.trimmed.isNotEmpty {
+                            submitDecision()
+                        } else {
+                            Task {
+                                if transcriber.isRecording {
+                                    transcriber.stop()
+                                    if !transcriber.transcript.isEmpty {
+                                        if !narrative.isEmpty { narrative += " " }
+                                        narrative += transcriber.transcript
+                                        transcriber.clearTranscript()
+                                    }
+                                } else {
+                                    await transcriber.start()
                                 }
-                            } else {
-                                await transcriber.start()
                             }
                         }
                     } label: {
-                        Image(systemName: transcriber.isRecording ? "stop.fill" : "mic")
+                        Image(systemName: composerActionIcon)
                             .font(.system(size: 18, weight: .medium))
                             .foregroundStyle(.white)
                             .frame(width: 46, height: 46)
@@ -939,6 +1152,13 @@ private struct HomeView: View {
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
                         .stroke(ClarityPalette.line, lineWidth: 1)
                 )
+
+                if let narrativeWarning {
+                    Text(narrativeWarning)
+                        .font(ClarityType.caption)
+                        .foregroundStyle(ClarityPalette.accent)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -981,17 +1201,20 @@ private struct HomeView: View {
                     .buttonStyle(.plain)
                 }
 
-                Button("Start Decision") {
-                    vm.startNewComparison()
-                    vm.activeDraft.contextNarrative = narrative.trimmed
-                    vm.activeDraft.title = makeTitle(from: narrative)
-                }
-                .buttonStyle(ClarityPrimaryButtonStyle())
-                .padding(.top, 6)
             }
             .padding(.horizontal, 24)
             .padding(.top, 20)
             .padding(.bottom, 24)
+        }
+        .onChange(of: narrative) { _, _ in
+            if narrativeWarning != nil {
+                narrativeWarning = nil
+            }
+        }
+        .onChange(of: transcriber.lastError) { _, error in
+            if let error {
+                vm.lastError = error
+            }
         }
     }
 
@@ -1001,22 +1224,326 @@ private struct HomeView: View {
         return value.isEmpty ? "JM" : value.uppercased()
     }
 
-    private func makeTitle(from value: String) -> String {
-        let trimmed = value.trimmed
-        if trimmed.isEmpty {
-            return "Untitled Decision"
+    private var composerActionIcon: String {
+        if narrative.trimmed.isNotEmpty {
+            return "arrow.up"
         }
-        return String(trimmed.prefix(56))
+        return transcriber.isRecording ? "stop.fill" : "mic"
+    }
+
+    private func submitDecision() {
+        guard narrative.trimmed.isNotEmpty else { return }
+        if let warning = vm.decisionEntryWarning(for: narrative) {
+            narrativeWarning = warning
+            return
+        }
+        if transcriber.isRecording {
+            transcriber.stop()
+        }
+        narrativeWarning = nil
+        vm.beginDecisionConversation(from: narrative)
+    }
+}
+
+private struct DecisionChatView: View {
+    @EnvironmentObject private var vm: AppViewModel
+    @FocusState private var composerFocused: Bool
+    @StateObject private var transcriber = SpeechTranscriber()
+    @State private var chatWarning: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    vm.screen = .home
+                } label: {
+                    Image(systemName: "arrow.left")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(ClarityPalette.ink)
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Text("Clarity AI")
+                    .font(.system(size: 19, weight: .semibold, design: .serif))
+                    .foregroundStyle(ClarityPalette.ink)
+
+                Spacer()
+
+                Button {
+                    vm.screen = .home
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(ClarityPalette.ink)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 18)
+            .padding(.bottom, 16)
+
+            ScrollViewReader { proxy in
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if let mode = vm.aiModeLabel {
+                            Text(mode)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(ClarityPalette.inkSoft)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(ClarityPalette.surfaceSoft, in: Capsule())
+                        }
+
+                        ForEach(vm.decisionChatMessages) { message in
+                            chatRow(for: message)
+                                .id(message.id)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                }
+                .onChange(of: vm.decisionChatMessages.count) { _, _ in
+                    if let id = vm.decisionChatMessages.last?.id {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            proxy.scrollTo(id, anchor: .bottom)
+                        }
+                    }
+                }
+            }
+
+            VStack(spacing: 8) {
+                HStack(spacing: 10) {
+                    TextField("Type your answer...", text: $vm.pendingFreeformReply, axis: .vertical)
+                        .lineLimit(1 ... 4)
+                        .font(.system(size: 16, weight: .regular))
+                        .focused($composerFocused)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 14)
+                        .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(ClarityPalette.line, lineWidth: 1)
+                        )
+
+                    Button {
+                        toggleMicrophoneOrSend()
+                    } label: {
+                        Image(systemName: transcriber.isRecording ? "stop.fill" : "mic")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(.white)
+                            .frame(width: 46, height: 46)
+                            .background(Color.black, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        sendFreeformReply()
+                    } label: {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(.white)
+                            .frame(width: 46, height: 46)
+                            .background(vm.pendingFreeformReply.trimmed.isEmpty ? ClarityPalette.line : Color.black, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.pendingFreeformReply.trimmed.isEmpty)
+                }
+
+                if let chatWarning {
+                    Text(chatWarning)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(ClarityPalette.accent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Using decision frameworks to guide you")
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(ClarityPalette.inkSoft)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+        }
+        .onChange(of: transcriber.lastError) { _, error in
+            if let error {
+                vm.lastError = error
+            }
+        }
+        .onChange(of: vm.pendingFreeformReply) { _, _ in
+            if chatWarning != nil {
+                chatWarning = nil
+            }
+        }
+    }
+
+    private func sendFreeformReply() {
+        let trimmed = vm.pendingFreeformReply.trimmed
+        guard !trimmed.isEmpty else { return }
+        if trimmed.count < 4 {
+            chatWarning = "Add a bit more context so I can reason with your actual constraints."
+            return
+        }
+        vm.sendFreeformChatReply()
+    }
+
+    private func toggleMicrophoneOrSend() {
+        Task {
+            if transcriber.isRecording {
+                transcriber.stop()
+                if transcriber.transcript.trimmed.isNotEmpty {
+                    if vm.pendingFreeformReply.trimmed.isNotEmpty {
+                        vm.pendingFreeformReply += " "
+                    }
+                    vm.pendingFreeformReply += transcriber.transcript.trimmed
+                    transcriber.clearTranscript()
+                }
+            } else {
+                await transcriber.start()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func chatRow(for message: DecisionChatMessage) -> some View {
+        if message.isTypingPlaceholder {
+            HStack {
+                VStack(spacing: 0) {
+                    HStack(spacing: 6) {
+                        ForEach(0..<3, id: \.self) { _ in
+                            Circle()
+                                .fill(ClarityPalette.accent.opacity(0.65))
+                                .frame(width: 7, height: 7)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .shadow(color: .black.opacity(0.06), radius: 12, x: 0, y: 4)
+                }
+                Spacer(minLength: 52)
+            }
+        } else if message.role == .assistant {
+            HStack {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(message.content)
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(ClarityPalette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if !message.options.isEmpty {
+                        VStack(spacing: 10) {
+                            ForEach(message.options) { option in
+                                Button {
+                                    vm.selectChatOption(option)
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        Text("\(option.index)")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(ClarityPalette.ink)
+                                            .frame(width: 24, height: 24)
+                                            .background(ClarityPalette.surfaceSoft, in: Circle())
+
+                                        Text(option.text)
+                                            .font(.system(size: 15, weight: .regular))
+                                            .foregroundStyle(ClarityPalette.ink)
+                                            .multilineTextAlignment(.leading)
+
+                                        Spacer(minLength: 0)
+                                    }
+                                    .padding(16)
+                                    .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .stroke(ClarityPalette.line, lineWidth: 1)
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+
+                            HStack(spacing: 10) {
+                                Button {
+                                    composerFocused = true
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "pencil")
+                                            .font(.system(size: 14, weight: .regular))
+                                        Text("Something else")
+                                            .font(.system(size: 15, weight: .regular))
+                                    }
+                                    .foregroundStyle(ClarityPalette.inkSoft)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(ClarityPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+
+                                if message.allowSkip {
+                                    Button {
+                                        vm.skipChatQuestion()
+                                    } label: {
+                                        Text("Skip")
+                                            .font(.system(size: 15, weight: .regular))
+                                            .foregroundStyle(ClarityPalette.inkSoft)
+                                            .frame(width: 88)
+                                            .padding(.vertical, 12)
+                                            .background(ClarityPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+
+                    if let cta = message.cta {
+                        Button {
+                            if cta.action == .setupOptions {
+                                vm.completeChatAndPrepareMatrix()
+                            }
+                        } label: {
+                            Text(cta.title)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(Color.black, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .frame(maxWidth: 318, alignment: .leading)
+                .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .shadow(color: .black.opacity(0.06), radius: 12, x: 0, y: 4)
+
+                Spacer(minLength: 52)
+            }
+        } else {
+            HStack {
+                Spacer(minLength: 52)
+
+                Text(message.content)
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: 318, alignment: .leading)
+                    .background(Color.black, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            }
+        }
     }
 }
 
 private struct RankingWizardView: View {
-    private enum Step: Int, CaseIterable {
+    private enum FlowStep: Int, CaseIterable {
         case describe = 0
         case clarify
         case options
         case weigh
         case challenge
+        case reassurance
         case analysis
 
         var title: String {
@@ -1026,6 +1553,7 @@ private struct RankingWizardView: View {
             case .options: return "Your options"
             case .weigh: return "Weigh your evidence"
             case .challenge: return "Challenge check"
+            case .reassurance: return "Reassurance"
             case .analysis: return "Clarity's Analysis"
             }
         }
@@ -1044,7 +1572,7 @@ private struct RankingWizardView: View {
     @EnvironmentObject private var vm: AppViewModel
 
     @StateObject private var transcriber = SpeechTranscriber()
-    @State private var step: Step = .describe
+    @State private var step: FlowStep = .describe
     @State private var importTarget: ImportTarget?
     @State private var linkTarget: LinkTarget?
     @State private var showFileImporter = false
@@ -1060,24 +1588,38 @@ private struct RankingWizardView: View {
     @State private var showTradeoffs = false
     @State private var showBlindSpots = true
     @State private var showGutCheck = false
+    @State private var didAutoGenerateAISuggestions = false
+    @State private var activeChallengeFlowFromResults = false
+    @State private var editingOptionID: String?
+    @State private var optionEditorName = ""
+    @State private var optionEditorNotes = ""
+    @State private var pendingDeleteOptionID: String?
 
     private var isExpressMode: Bool {
         vm.expressModeEnabled && vm.expressModeAvailable
     }
 
+    private var isChatFirstFlow: Bool {
+        vm.matrixSetupReady || vm.activeDraft.chatPhase == .completed
+    }
+
+    private var visibleFlowSteps: [FlowStep] {
+        if isExpressMode {
+            return [.describe, .analysis]
+        }
+        if activeChallengeFlowFromResults {
+            return [.challenge, .reassurance, .analysis]
+        }
+        return [.describe, .clarify, .options, .weigh, .analysis]
+    }
+
     private var totalSteps: Int {
-        isExpressMode ? 3 : 7
+        visibleFlowSteps.count
     }
 
     private var visibleStepNumber: Int {
-        if isExpressMode {
-            switch step {
-            case .describe: return 1
-            case .analysis: return 2
-            default: return 2
-            }
-        }
-        return step.rawValue + 1
+        guard let index = visibleFlowSteps.firstIndex(of: step) else { return 1 }
+        return index + 1
     }
 
     private var previewResult: RankingResult {
@@ -1089,6 +1631,106 @@ private struct RankingWizardView: View {
     }
 
     var body: some View {
+        rankingScaffold
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: [.pdf, .image, .text, .item],
+                allowsMultipleSelection: true
+            ) { result in
+                guard let importTarget else { return }
+                guard case let .success(urls) = result else { return }
+                let attachments = urls.compactMap { persistImportedFile(from: $0) }
+                switch importTarget {
+                case .context:
+                    appendAttachments(attachments, to: .context)
+                case let .vendor(vendorID):
+                    appendAttachments(attachments, to: .vendor(vendorID))
+                }
+            }
+            .onChange(of: transcriber.lastError) { _, error in
+                if let error {
+                    vm.lastError = error
+                }
+            }
+            .sheet(isPresented: $showLinkSheet) {
+                addSourceLinkSheet
+            }
+            .sheet(isPresented: Binding(
+                get: { editingOptionID != nil },
+                set: {
+                    if !$0 {
+                        editingOptionID = nil
+                        optionEditorName = ""
+                        optionEditorNotes = ""
+                    }
+                }
+            )) {
+                optionEditorSheet
+            }
+            .alert("Delete option?", isPresented: Binding(
+                get: { pendingDeleteOptionID != nil },
+                set: { if !$0 { pendingDeleteOptionID = nil } }
+            )) {
+                Button("Delete", role: .destructive) {
+                    if let pendingDeleteOptionID {
+                        vm.removeVendorOption(id: pendingDeleteOptionID)
+                    }
+                    pendingDeleteOptionID = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingDeleteOptionID = nil
+                }
+            } message: {
+                Text("This removes the option and its draft scores from the comparison.")
+            }
+            .onAppear {
+                syncRankingStep()
+            }
+            .onChange(of: step) { _, newStep in
+                if newStep == .weigh, !didAutoGenerateAISuggestions, vm.activeDraft.contextNarrative.trimmed.isNotEmpty {
+                    didAutoGenerateAISuggestions = true
+                    vm.applyAISuggestions()
+                }
+                if newStep == .challenge, vm.activeDraft.biasChallenges.isEmpty {
+                    challengeIndex = 0
+                    vm.prepareBiasChallenges(preferredOption: previewResult.rankedVendors.first.map { optionLabel(for: $0.vendorID, fallback: $0.vendorName) })
+                }
+                if newStep == .analysis {
+                    vm.computeResult(navigateToResults: false)
+                }
+            }
+            .onChange(of: vm.activeDraft.id) { _, _ in
+                challengeIndex = 0
+                didAutoGenerateAISuggestions = false
+                fallbackOptionAnswer = vm.activeDraft.alternativePathAnswer ?? ""
+                activeChallengeFlowFromResults = false
+                editingOptionID = nil
+                optionEditorName = ""
+                optionEditorNotes = ""
+                pendingDeleteOptionID = nil
+                syncRankingStep()
+            }
+            .onChange(of: vm.matrixSetupReady) { _, isReady in
+                if isReady || vm.activeDraft.chatPhase == .completed {
+                    syncRankingStep()
+                }
+            }
+            .onChange(of: vm.rankingEntryMode) { _, mode in
+                if mode != .manual {
+                    syncRankingStep()
+                }
+            }
+            .onChange(of: vm.activeDraft.biasChallenges.map(\.id)) { _, ids in
+                let lastValidIndex = max(ids.count - 1, 0)
+                if ids.isEmpty {
+                    challengeIndex = 0
+                } else if challengeIndex > lastValidIndex {
+                    challengeIndex = lastValidIndex
+                }
+            }
+    }
+
+    private var rankingScaffold: some View {
         VStack(spacing: 0) {
             header
 
@@ -1105,6 +1747,8 @@ private struct RankingWizardView: View {
                         weighStep
                     case .challenge:
                         challengeStep
+                    case .reassurance:
+                        reassuranceStep
                     case .analysis:
                         analysisStep
                     }
@@ -1118,98 +1762,115 @@ private struct RankingWizardView: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 16)
         }
-        .fileImporter(
-            isPresented: $showFileImporter,
-            allowedContentTypes: [.pdf, .image, .text, .item],
-            allowsMultipleSelection: true
-        ) { result in
-            guard let importTarget else { return }
-            guard case let .success(urls) = result else { return }
-            let attachments = urls.compactMap { persistImportedFile(from: $0) }
-            switch importTarget {
-            case .context:
-                appendAttachments(attachments, to: .context)
-            case let .vendor(vendorID):
-                appendAttachments(attachments, to: .vendor(vendorID))
-            }
-        }
-        .sheet(isPresented: $showLinkSheet) {
-            NavigationStack {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text("Add a source link")
-                        .font(ClarityType.cardSerif)
-                        .foregroundStyle(ClarityPalette.ink)
+    }
 
-                    Text("Paste a URL. ScoreWise will use the source text as evidence when available.")
-                        .font(ClarityType.body)
-                        .foregroundStyle(ClarityPalette.inkSoft)
+    private var addSourceLinkSheet: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Add a source link")
+                    .font(ClarityType.cardSerif)
+                    .foregroundStyle(ClarityPalette.ink)
 
-                    ClarityTextInput(title: "https://example.com", text: $linkInput)
+                Text("Paste a URL. Clarity AI will use the source text as evidence when available.")
+                    .font(ClarityType.body)
+                    .foregroundStyle(ClarityPalette.inkSoft)
 
-                    if !linkPreviewTitle.isEmpty || !linkPreviewHost.isEmpty || !linkValidationMessage.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            if !linkPreviewTitle.isEmpty {
-                                Text(linkPreviewTitle)
-                                    .font(ClarityType.bodyMedium)
-                                    .foregroundStyle(ClarityPalette.ink)
-                            }
-                            if !linkPreviewHost.isEmpty {
-                                HStack(spacing: 8) {
-                                    statusPill(linkPreviewTrust.displayName, tone: linkPreviewTrust.tint)
-                                    Text(linkPreviewHost)
-                                        .font(ClarityType.caption)
-                                        .foregroundStyle(ClarityPalette.inkSoft)
-                                }
-                            }
-                            if !linkValidationMessage.isEmpty {
-                                Text(linkValidationMessage)
+                ClarityTextInput(title: "https://example.com", text: $linkInput)
+
+                if !linkPreviewTitle.isEmpty || !linkPreviewHost.isEmpty || !linkValidationMessage.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !linkPreviewTitle.isEmpty {
+                            Text(linkPreviewTitle)
+                                .font(ClarityType.bodyMedium)
+                                .foregroundStyle(ClarityPalette.ink)
+                        }
+                        if !linkPreviewHost.isEmpty {
+                            HStack(spacing: 8) {
+                                statusPill(linkPreviewTrust.displayName, tone: linkPreviewTrust.tint)
+                                Text(linkPreviewHost)
                                     .font(ClarityType.caption)
-                                    .foregroundStyle(linkValidationMessage.lowercased().contains("saved") ? ClarityPalette.inkSoft : ClarityPalette.accent)
+                                    .foregroundStyle(ClarityPalette.inkSoft)
                             }
                         }
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(ClarityPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    }
-
-                    Spacer()
-
-                    Button(isValidatingLink ? "Checking link..." : "Save Link") {
-                        Task { await addLinkAttachment() }
-                    }
-                    .buttonStyle(ClarityPrimaryButtonStyle())
-                    .disabled(normalizedLink(from: linkInput) == nil || isValidatingLink)
-                    .opacity(normalizedLink(from: linkInput) == nil || isValidatingLink ? 0.45 : 1)
-                }
-                .padding(24)
-                .onChange(of: linkInput) { _, _ in
-                    linkPreviewTitle = ""
-                    linkPreviewHost = ""
-                    linkPreviewTrust = .unknown
-                    linkValidationMessage = ""
-                }
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Cancel") {
-                            showLinkSheet = false
-                            resetLinkComposer()
+                        if !linkValidationMessage.isEmpty {
+                            Text(linkValidationMessage)
+                                .font(ClarityType.caption)
+                                .foregroundStyle(linkValidationMessage.lowercased().contains("saved") ? ClarityPalette.inkSoft : ClarityPalette.accent)
                         }
                     }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(ClarityPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+
+                Spacer()
+
+                Button(isValidatingLink ? "Checking link..." : "Save Link") {
+                    Task { await addLinkAttachment() }
+                }
+                .buttonStyle(ClarityPrimaryButtonStyle())
+                .disabled(normalizedLink(from: linkInput) == nil || isValidatingLink)
+                .opacity(normalizedLink(from: linkInput) == nil || isValidatingLink ? 0.45 : 1)
+            }
+            .padding(24)
+            .onChange(of: linkInput) { _, _ in
+                linkPreviewTitle = ""
+                linkPreviewHost = ""
+                linkPreviewTrust = .unknown
+                linkValidationMessage = ""
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") {
+                        showLinkSheet = false
+                        resetLinkComposer()
+                    }
                 }
             }
-            .presentationDetents([.height(320)])
         }
-        .onChange(of: step) { _, newStep in
-            if newStep == .clarify {
-                vm.prepareClarifyingQuestions()
+        .presentationDetents([.height(320)])
+    }
+
+    private var optionEditorSheet: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Edit option")
+                    .font(ClarityType.cardSerif)
+                    .foregroundStyle(ClarityPalette.ink)
+
+                ClarityTextInput(title: "Option name", text: $optionEditorName)
+
+                ClarityTextInput(title: "Why is this option worth considering?", text: $optionEditorNotes)
+
+                Spacer()
+
+                Button("Save changes") {
+                    guard let optionID = editingOptionID else { return }
+                    vm.updateVendorOption(
+                        id: optionID,
+                        name: optionEditorName.trimmed,
+                        notes: optionEditorNotes.trimmed
+                    )
+                    editingOptionID = nil
+                    optionEditorName = ""
+                    optionEditorNotes = ""
+                }
+                .buttonStyle(ClarityPrimaryButtonStyle())
+                .disabled(optionEditorName.trimmed.isEmpty)
+                .opacity(optionEditorName.trimmed.isEmpty ? 0.45 : 1)
             }
-            if newStep == .challenge, vm.activeDraft.biasChallenges.isEmpty {
-                vm.prepareBiasChallenges(preferredOption: previewResult.rankedVendors.first?.vendorName)
-            }
-            if newStep == .analysis {
-                vm.computeResult(navigateToResults: false)
+            .padding(24)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") {
+                        editingOptionID = nil
+                        optionEditorName = ""
+                        optionEditorNotes = ""
+                    }
+                }
             }
         }
+        .presentationDetents([.height(360)])
     }
 
     private var header: some View {
@@ -1242,35 +1903,57 @@ private struct RankingWizardView: View {
                 .buttonStyle(.plain)
             }
 
-            HStack {
-                Text("Step \(visibleStepNumber) of \(totalSteps)")
+            if !isChatFirstFlow {
+                HStack {
+                    Text("Step \(visibleStepNumber) of \(totalSteps)")
+                        .font(ClarityType.title)
+                        .foregroundStyle(ClarityPalette.inkSoft)
+
+                    Spacer()
+
+                    if step == FlowStep.challenge && !isExpressMode {
+                        Button("Skip") {
+                            vm.completeChallengeFlowAndGenerateReassurance()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                step = FlowStep.reassurance
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .font(ClarityType.body)
+                        .foregroundStyle(ClarityPalette.inkSoft)
+                    }
+                }
+
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.gray.opacity(0.22))
+                        Capsule()
+                            .fill(ClarityPalette.accent)
+                            .frame(width: proxy.size.width * progressFraction)
+                    }
+                }
+                .frame(height: 4)
+            } else {
+                Text(step.title)
                     .font(ClarityType.title)
                     .foregroundStyle(ClarityPalette.inkSoft)
 
-                Spacer()
-
-                if step == .challenge && !isExpressMode {
-                    Button("Skip") {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            step = .analysis
+                if step == .challenge {
+                    HStack {
+                        Spacer()
+                        Button("Skip") {
+                            vm.completeChallengeFlowAndGenerateReassurance()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                step = .reassurance
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .font(ClarityType.body)
+                        .foregroundStyle(ClarityPalette.inkSoft)
                     }
-                    .buttonStyle(.plain)
-                    .font(ClarityType.body)
-                    .foregroundStyle(ClarityPalette.inkSoft)
                 }
             }
-
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.gray.opacity(0.22))
-                    Capsule()
-                        .fill(ClarityPalette.accent)
-                        .frame(width: proxy.size.width * progressFraction)
-                }
-            }
-            .frame(height: 4)
         }
         .padding(.horizontal, 24)
         .padding(.top, 12)
@@ -1284,20 +1967,23 @@ private struct RankingWizardView: View {
                 handleNext()
             }
             .buttonStyle(ClarityPrimaryButtonStyle())
-            .frame(width: step == .challenge ? 248 : (step == .analysis ? 138 : 100))
+            .frame(width: step == FlowStep.challenge ? 220 : (step == FlowStep.analysis ? 138 : 120))
             .disabled(!canProceed)
             .opacity(canProceed ? 1 : 0.45)
         }
     }
 
     private var nextButtonTitle: String {
-        if isExpressMode && step == .describe {
+        if isExpressMode && step == FlowStep.describe {
             return "Analyze"
         }
-        if step == .challenge {
-            return challengeIndex < max(vm.activeDraft.biasChallenges.count - 1, 0) ? "Submit & Next Challenge" : "Submit & Continue"
+        if step == FlowStep.challenge {
+            return challengeIndex < max(vm.activeDraft.biasChallenges.count - 1, 0) ? "Next Challenge" : "Get Reassurance"
         }
-        if step == .analysis {
+        if step == FlowStep.reassurance {
+            return "Back to Analysis"
+        }
+        if step == FlowStep.analysis {
             return "Final Summary"
         }
         return "Next"
@@ -1305,65 +1991,162 @@ private struct RankingWizardView: View {
 
     private func handleBack() {
         withAnimation(.easeInOut(duration: 0.2)) {
-            if step == .describe {
+            if activeChallengeFlowFromResults && (step == .challenge || step == .reassurance || step == .analysis) {
+                vm.screen = .results
+                return
+            }
+            switch step {
+            case .describe:
                 vm.screen = .home
-            } else {
-                step = Step(rawValue: step.rawValue - 1) ?? .describe
+            case .clarify:
+                step = .describe
+            case .options:
+                step = .clarify
+            case .weigh:
+                step = .options
+            case .analysis:
+                step = .weigh
+            case .reassurance:
+                step = .challenge
+            case .challenge:
+                step = .analysis
             }
         }
     }
 
     private var canProceed: Bool {
         switch step {
-        case .describe:
-            return !vm.activeDraft.contextNarrative.trimmed.isEmpty
-        case .clarify:
+        case FlowStep.describe:
+            return !vm.activeDraft.contextNarrative.trimmed.isEmpty && !vm.isApplyingAISuggestions
+        case FlowStep.clarify:
             if isExpressMode { return true }
-            return vm.activeDraft.clarifyingQuestions.count == 3 && vm.activeDraft.clarifyingQuestions.allSatisfy { !$0.answer.trimmed.isEmpty }
-        case .options:
-            return vm.activeDraft.vendors.count >= 2 && vm.activeDraft.vendors.allSatisfy { !$0.name.trimmed.isEmpty }
-        case .weigh:
-            return vm.activeDraft.criteria.count >= 3
-        case .challenge:
-            guard vm.activeDraft.biasChallenges.indices.contains(challengeIndex) else { return false }
-            return !vm.activeDraft.biasChallenges[challengeIndex].response.trimmed.isEmpty
-        case .analysis:
+            let answeredCount = vm.activeDraft.clarifyingQuestions.filter { !$0.answer.trimmed.isEmpty }.count
+            return vm.activeDraft.clarifyingQuestions.count >= 6 && answeredCount >= 6
+        case FlowStep.options:
+            return hasMinimumMeaningfulOptions && !vm.isApplyingAISuggestions
+        case FlowStep.weigh:
+            return vm.activeDraft.criteria.count >= 3 && !vm.isApplyingAISuggestions
+        case FlowStep.challenge:
+            return true
+        case FlowStep.reassurance:
+            return vm.activeDraft.postChallengeReassurance?.trimmed.isNotEmpty == true
+        case FlowStep.analysis:
             return true
         }
     }
 
     private func handleNext() {
         switch step {
-        case .describe where isExpressMode:
+        case FlowStep.describe where isExpressMode:
             vm.runExpressAnalysis()
             withAnimation(.easeInOut(duration: 0.2)) {
-                step = .analysis
+                step = FlowStep.analysis
             }
-        case .clarify:
+        case FlowStep.describe:
+            Task {
+                let route = await vm.prepareMatrixFromNarrativeAndRoute()
+                await MainActor.run {
+                    if route == .weigh {
+                        didAutoGenerateAISuggestions = true
+                    }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        switch route {
+                        case .weigh:
+                            step = .weigh
+                        case .clarify:
+                            step = .clarify
+                        case .options:
+                            step = .options
+                        }
+                    }
+                }
+            }
+        case FlowStep.clarify:
             vm.suggestOptionsFromClarifyingAnswers()
             withAnimation(.easeInOut(duration: 0.2)) {
-                step = .options
+                step = FlowStep.options
             }
-        case .weigh:
-            vm.prepareBiasChallenges(preferredOption: previewResult.rankedVendors.first?.vendorName)
+        case FlowStep.options:
+            Task {
+                vm.updateAlternativePathAnswer(fallbackOptionAnswer)
+                let prepared = await vm.prepareScoringFromCurrentOptions()
+                await MainActor.run {
+                    guard prepared else { return }
+                    didAutoGenerateAISuggestions = true
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        step = .weigh
+                    }
+                }
+            }
+        case FlowStep.weigh:
             withAnimation(.easeInOut(duration: 0.2)) {
-                step = .challenge
+                step = FlowStep.analysis
             }
-        case .challenge:
+        case FlowStep.challenge:
             if challengeIndex < max(vm.activeDraft.biasChallenges.count - 1, 0) {
                 challengeIndex += 1
             } else {
+                vm.completeChallengeFlowAndGenerateReassurance()
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    step = .analysis
+                    step = FlowStep.reassurance
                 }
             }
-        case .analysis:
-            vm.computeResult(navigateToResults: true)
-        default:
+        case FlowStep.reassurance:
             withAnimation(.easeInOut(duration: 0.2)) {
-                step = Step(rawValue: step.rawValue + 1) ?? .analysis
+                step = FlowStep.analysis
             }
+        case FlowStep.analysis:
+            vm.computeResult(navigateToResults: true)
         }
+    }
+
+    private func syncRankingStep() {
+        guard vm.decisionFlowV2Enabled else {
+            step = vm.matrixSetupReady || vm.activeDraft.chatPhase == .completed ? .options : .describe
+            return
+        }
+
+        if vm.rankingEntryMode == .postAnalysisChallenge {
+            activeChallengeFlowFromResults = true
+            challengeIndex = 0
+            step = .challenge
+            if vm.activeDraft.biasChallenges.isEmpty {
+                vm.prepareBiasChallenges(preferredOption: previewResult.rankedVendors.first.map { optionLabel(for: $0.vendorID, fallback: $0.vendorName) })
+            }
+            vm.rankingEntryMode = .manual
+            return
+        }
+
+        if vm.rankingEntryMode == .chatReady || vm.matrixSetupReady || vm.activeDraft.chatPhase == .completed {
+            activeChallengeFlowFromResults = false
+            let validation = vm.optionScopeValidation()
+            if validation.isValid {
+                vm.optionsValidationMessage = nil
+                step = .weigh
+            } else {
+                vm.optionsValidationMessage = validation.message
+                step = .options
+            }
+            vm.rankingEntryMode = .manual
+            return
+        }
+
+        activeChallengeFlowFromResults = false
+        step = hasMinimumMeaningfulOptions ? .options : .describe
+        vm.rankingEntryMode = .manual
+    }
+
+    private var hasMinimumMeaningfulOptions: Bool {
+        vm.activeDraft.vendors.filter { vendor in
+            let name = vendor.name.trimmed.lowercased()
+            return !name.isEmpty && !name.hasPrefix("vendor ") && !name.hasPrefix("option ") && !name.hasPrefix("candidate ")
+        }.count >= 2
+    }
+
+    private func openOptionEditor(for vendor: VendorDraft) {
+        editingOptionID = vendor.id
+        optionEditorName = vendor.name
+        optionEditorNotes = vendor.notes
     }
 
     private var describeStep: some View {
@@ -1502,8 +2285,14 @@ private struct RankingWizardView: View {
                 .font(ClarityType.title)
                 .foregroundStyle(ClarityPalette.inkSoft)
 
-            ForEach(vm.activeDraft.vendors.indices, id: \.self) { index in
-                let vendor = vm.activeDraft.vendors[index]
+            if let warning = vm.optionsValidationMessage, warning.trimmed.isNotEmpty {
+                Text(warning)
+                    .font(ClarityType.caption)
+                    .foregroundStyle(ClarityPalette.accent)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach(Array(vm.activeDraft.vendors.enumerated()), id: \.element.id) { index, vendor in
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .top, spacing: 10) {
                         Text(optionBadge(index))
@@ -1512,22 +2301,36 @@ private struct RankingWizardView: View {
                             .frame(width: 32, height: 32)
                             .background(ClarityPalette.surfaceSoft, in: Circle())
 
-                        TextField("Option \(optionBadge(index))", text: Binding(
-                            get: { vm.activeDraft.vendors[index].name },
-                            set: { vm.activeDraft.vendors[index].name = $0 }
-                        ), axis: .vertical)
-                        .lineLimit(2 ... 3)
-                        .font(ClarityType.body)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(vendor.name.trimmed.isEmpty ? "Unnamed option" : vendor.name)
+                                .font(ClarityType.bodyMedium)
+                                .foregroundStyle(ClarityPalette.ink)
+
+                            if vendor.notes.trimmed.isNotEmpty {
+                                Text(vendor.notes)
+                                    .font(ClarityType.caption)
+                                    .foregroundStyle(ClarityPalette.inkSoft)
+                                    .lineLimit(3)
+                            } else if vendor.name.trimmed.isNotEmpty {
+                                Text("No rationale added yet.")
+                                    .font(ClarityType.caption)
+                                    .foregroundStyle(ClarityPalette.inkSoft)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                         HStack(spacing: 12) {
-                            Image(systemName: "pencil")
-                                .foregroundStyle(ClarityPalette.inkSoft)
+                            Button {
+                                openOptionEditor(for: vendor)
+                            } label: {
+                                Image(systemName: "pencil")
+                                    .foregroundStyle(ClarityPalette.inkSoft)
+                            }
+                            .buttonStyle(.plain)
 
                             Button {
                                 if vm.activeDraft.vendors.count > 2 {
-                                    let removedID = vendor.id
-                                    vm.activeDraft.vendors.remove(at: index)
-                                    vm.activeDraft.scores.removeAll { $0.vendorID == removedID }
+                                    pendingDeleteOptionID = vendor.id
                                 }
                             } label: {
                                 Image(systemName: "trash")
@@ -1559,8 +2362,8 @@ private struct RankingWizardView: View {
 
                         Spacer()
 
-                        if !vm.activeDraft.vendors[index].attachments.isEmpty {
-                            Text("\(vm.activeDraft.vendors[index].attachments.count)")
+                        if !vendor.attachments.isEmpty {
+                            Text("\(vendor.attachments.count)")
                                 .font(.caption.weight(.semibold))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
@@ -1568,9 +2371,9 @@ private struct RankingWizardView: View {
                         }
                     }
 
-                    if !vm.activeDraft.vendors[index].attachments.isEmpty {
+                    if !vendor.attachments.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
-                            ForEach(vm.activeDraft.vendors[index].attachments, id: \.id) { attachment in
+                            ForEach(vendor.attachments, id: \.id) { attachment in
                                 attachmentStatusRow(attachment)
                             }
                         }
@@ -1587,7 +2390,11 @@ private struct RankingWizardView: View {
 
             if vm.activeDraft.vendors.count < 8 {
                 Button {
-                    vm.activeDraft.vendors.append(VendorDraft(name: "", notes: "", attachments: []))
+                    if let optionID = vm.addVendorOption() {
+                        if let option = vm.vendorOption(id: optionID) {
+                            openOptionEditor(for: option)
+                        }
+                    }
                 } label: {
                     Label("Add another option", systemImage: "plus")
                         .font(ClarityType.titleMedium)
@@ -1606,6 +2413,12 @@ private struct RankingWizardView: View {
             questionCard("If neither of these existed, what would you do?") {
                 ClarityTextInput(title: "Type your answer...", text: $fallbackOptionAnswer)
             }
+
+            if fallbackOptionAnswer.trimmed.isNotEmpty {
+                Text("AI will treat this as an alternative path and use it when generating criteria, scores, and trade-offs.")
+                    .font(ClarityType.caption)
+                    .foregroundStyle(ClarityPalette.inkSoft)
+            }
         }
     }
 
@@ -1622,6 +2435,23 @@ private struct RankingWizardView: View {
                 .font(ClarityType.title)
                 .foregroundStyle(ClarityPalette.inkSoft)
 
+            if let summary = vm.aiSuggestionSummary, !summary.isEmpty {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(ClarityPalette.accent)
+                    Text(summary)
+                        .font(ClarityType.caption)
+                        .foregroundStyle(ClarityPalette.inkSoft)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(ClarityPalette.line, lineWidth: 1)
+                )
+            }
+
             HStack(spacing: 8) {
                 Image(systemName: balanced ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                     .foregroundStyle(balanced ? ClarityPalette.green : ClarityPalette.accent)
@@ -1632,6 +2462,24 @@ private struct RankingWizardView: View {
                     .foregroundStyle(balanced ? ClarityPalette.green : ClarityPalette.accent)
             }
 
+            if let constraints = vm.activeDraft.constraintFindings, constraints.contains(where: { !$0.violatedOptionLabels.isEmpty }) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(constraints.filter { !$0.violatedOptionLabels.isEmpty }, id: \.id) { finding in
+                        Text("Constraint: \(finding.rule) - Violated by \(finding.violatedOptionLabels.joined(separator: ", "))")
+                            .font(ClarityType.caption)
+                            .foregroundStyle(ClarityPalette.accent)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ClarityPalette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(ClarityPalette.accent.opacity(0.25), lineWidth: 1)
+                )
+            }
+
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
@@ -1640,7 +2488,7 @@ private struct RankingWizardView: View {
                         Text("WEIGHT")
                             .frame(width: 80, alignment: .leading)
                         ForEach(vm.activeDraft.vendors, id: \.id) { vendor in
-                            Text(vendor.name.trimmed.isEmpty ? "OPTION" : vendor.name)
+                            Text(vendor.name.trimmed.isEmpty ? "UNNAMED" : vendor.name)
                                 .frame(width: 92, alignment: .leading)
                                 .lineLimit(1)
                         }
@@ -1648,12 +2496,16 @@ private struct RankingWizardView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(ClarityPalette.inkSoft)
 
-                    ForEach(vm.activeDraft.criteria.indices, id: \.self) { row in
-                        let criterion = vm.activeDraft.criteria[row]
+                    ForEach(vm.activeDraft.criteria, id: \.id) { criterion in
                         HStack(spacing: 8) {
                             TextField("Criterion", text: Binding(
-                                get: { vm.activeDraft.criteria[row].name },
-                                set: { vm.activeDraft.criteria[row].name = $0 }
+                                get: {
+                                    vm.activeDraft.criteria.first(where: { $0.id == criterion.id })?.name ?? ""
+                                },
+                                set: { newValue in
+                                    guard let index = vm.activeDraft.criteria.firstIndex(where: { $0.id == criterion.id }) else { return }
+                                    vm.activeDraft.criteria[index].name = newValue
+                                }
                             ))
                             .font(.subheadline)
                             .padding(.horizontal, 12)
@@ -1700,6 +2552,24 @@ private struct RankingWizardView: View {
             .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(ClarityPalette.line, lineWidth: 1))
 
+            Button {
+                vm.applyAISuggestions()
+            } label: {
+                Label("Refresh AI Suggestions", systemImage: "sparkles")
+                    .font(ClarityType.bodyMedium)
+                    .foregroundStyle(ClarityPalette.ink)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(ClarityPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(ClarityPalette.line, lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.isApplyingAISuggestions)
+            .opacity(vm.isApplyingAISuggestions ? 0.45 : 1)
+
             Text("WEIGHTED SCORES")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(ClarityPalette.inkSoft)
@@ -1708,7 +2578,7 @@ private struct RankingWizardView: View {
                 ForEach(previewResult.rankedVendors, id: \.vendorID) { item in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text(item.vendorName.trimmed.isEmpty ? "Option" : item.vendorName)
+                            Text(optionLabel(for: item.vendorID, fallback: item.vendorName))
                                 .font(ClarityType.body)
                                 .foregroundStyle(ClarityPalette.ink)
                             Spacer()
@@ -1774,6 +2644,7 @@ private struct RankingWizardView: View {
                                     Text(card.question)
                                         .font(ClarityType.sectionSerif)
                                         .foregroundStyle(ClarityPalette.ink)
+                                        .fixedSize(horizontal: false, vertical: true)
 
                                     TextEditor(text: Binding(
                                         get: {
@@ -1799,11 +2670,45 @@ private struct RankingWizardView: View {
         }
     }
 
+    private var reassuranceStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Reassurance")
+                .font(ClarityType.heroSerif)
+                .foregroundStyle(ClarityPalette.ink)
+
+            Text("Based on your challenge-check answers")
+                .font(ClarityType.title)
+                .foregroundStyle(ClarityPalette.inkSoft)
+
+            if let reassurance = vm.activeDraft.postChallengeReassurance, reassurance.trimmed.isNotEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(reassurance)
+                        .font(ClarityType.body)
+                        .foregroundStyle(ClarityPalette.ink)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(ClarityPalette.line, lineWidth: 1)
+                )
+            } else {
+                ProgressView("Generating reassurance...")
+                    .font(ClarityType.body)
+                    .foregroundStyle(ClarityPalette.inkSoft)
+                    .frame(maxWidth: .infinity, minHeight: 220, alignment: .center)
+            }
+        }
+    }
+
     private var analysisStep: some View {
         let winner = previewResult.rankedVendors.first
+        let winnerLabel = winner.map { optionLabel(for: $0.vendorID, fallback: $0.vendorName) } ?? "Leading option"
         let confidenceText: String = previewResult.confidenceScore >= 0.75 ? "HIGH CONFIDENCE" : "MEDIUM CONFIDENCE"
-        let recommendation = vm.activeInsight?.winnerReasoning
-            ?? (winner?.vendorName.trimmed.isEmpty == false ? winner?.vendorName ?? "Option A" : "Option A")
+        let recommendation = vm.activeDraft.decisionReport?.recommendation
+            ?? vm.activeInsight?.winnerReasoning
+            ?? winnerLabel
 
         return VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 16) {
@@ -1825,33 +2730,42 @@ private struct RankingWizardView: View {
                 Divider()
 
                 analysisRow(
-                    title: "KEY TRADE-OFFS",
+                    title: "DRIVERS",
                     expanded: $showTradeoffs,
-                    lines: insightLines(from: vm.activeInsight?.summary, fallback: [
-                        "Higher scoring options may trade off flexibility.",
-                        "Lower-risk options can limit upside growth."
-                    ])
+                    lines: (vm.activeDraft.decisionReport?.drivers.isEmpty == false)
+                        ? vm.activeDraft.decisionReport?.drivers ?? []
+                        : insightLines(from: vm.activeInsight?.summary, fallback: [
+                            "Higher scoring options may trade off flexibility.",
+                            "Lower-risk options can limit upside growth."
+                        ])
                 )
 
                 analysisRow(
-                    title: "BLIND SPOTS TO WATCH",
+                    title: "RISKS",
                     expanded: $showBlindSpots,
-                    lines: vm.activeInsight?.riskFlags ?? ["Weight choices may over-index recent events."]
+                    lines: (vm.activeDraft.decisionReport?.risks.isEmpty == false)
+                        ? vm.activeDraft.decisionReport?.risks ?? []
+                        : (vm.activeInsight?.riskFlags ?? ["Weight choices may over-index recent events."])
                 )
 
                 analysisRow(
-                    title: "GUT CHECK",
+                    title: "CONFIDENCE CHECK",
                     expanded: $showGutCheck,
-                    lines: insightLines(from: vm.activeInsight?.sensitivityFindings.first, fallback: [
-                        "If this result feels wrong instantly, revisit the highest-weight criterion."
-                    ])
+                    lines: {
+                        if let report = vm.activeDraft.decisionReport {
+                            return (["Confidence level: \(report.confidence)"] + report.biasChecks).filter { !$0.trimmed.isEmpty }
+                        }
+                        return insightLines(from: vm.activeInsight?.sensitivityFindings.first, fallback: [
+                            "If this result feels wrong instantly, revisit the highest-weight criterion."
+                        ])
+                    }()
                 )
 
                 Text("YOUR NEXT STEP")
                     .font(ClarityType.smallCaps)
                     .foregroundStyle(ClarityPalette.inkSoft)
 
-                Text(vm.activeInsight?.overlookedStrategicPoints.first ?? "Schedule a concrete action within 48 hours to validate this recommendation.")
+                Text(vm.activeDraft.decisionReport?.nextStep ?? vm.activeInsight?.overlookedStrategicPoints.first ?? "Schedule a concrete action within 48 hours to validate this recommendation.")
                     .font(ClarityType.body)
                     .foregroundStyle(ClarityPalette.ink)
                     .padding(14)
@@ -1977,7 +2891,8 @@ private struct RankingWizardView: View {
         )
 
         do {
-            if let evidence = try await vm.services.extractor.extractEvidence(for: [attachment]).first {
+            let extractedEvidence = try await vm.services.extractor.extractEvidence(for: [attachment])
+            if let evidence = extractedEvidence.first {
                 attachment = attachment.applyingPreview(evidence)
                 linkPreviewTitle = evidence.titleHint
                 linkPreviewHost = evidence.sourceHost
@@ -2166,6 +3081,14 @@ private struct RankingWizardView: View {
             }
         )
     }
+
+    private func optionLabel(for vendorID: String, fallback: String) -> String {
+        if let exact = vm.activeDraft.vendors.first(where: { $0.id == vendorID })?.name.trimmed, exact.isNotEmpty {
+            return exact
+        }
+        let safeFallback = fallback.trimmed
+        return safeFallback.isEmpty ? "Unnamed option" : safeFallback
+    }
 }
 
 private struct ResultsView: View {
@@ -2190,6 +3113,9 @@ private struct ResultsView: View {
     }
 
     private var insightBullets: [String] {
+        if let report = vm.activeDraft.decisionReport, !report.drivers.isEmpty {
+            return Array(report.drivers.prefix(3))
+        }
         let source = vm.activeInsight?.summary
             .split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "• ", with: "").replacingOccurrences(of: "- ", with: "") }
@@ -2197,8 +3123,31 @@ private struct ResultsView: View {
         return Array(source.prefix(3))
     }
 
-    private var resultsStepLabel: String {
-        vm.expressModeEnabled && vm.expressModeAvailable ? "Step 3 of 3" : "Step 7 of 7"
+    private var blindSpotBullets: [String] {
+        if let report = vm.activeDraft.decisionReport, !report.risks.isEmpty {
+            return Array(report.risks.prefix(3))
+        }
+        return Array((vm.activeInsight?.riskFlags ?? ["Pressure-test the top-weighted assumption before treating the result as final."]).prefix(3))
+    }
+
+    private var confidenceBullets: [String] {
+        if let report = vm.activeDraft.decisionReport {
+            let lines = (["Confidence level: \(report.confidence)"] + report.biasChecks).filter { !$0.trimmed.isEmpty }
+            return Array(lines.prefix(3))
+        }
+        let lines = vm.activeInsight?.sensitivityFindings.filter { !$0.trimmed.isEmpty } ?? []
+        return Array((lines.isEmpty ? ["Check whether the winner still leads if the top criterion weight changes."] : lines).prefix(3))
+    }
+
+    private var nextStepText: String {
+        if let report = vm.activeDraft.decisionReport, report.nextStep.trimmed.isNotEmpty {
+            return report.nextStep
+        }
+        return vm.activeInsight?.overlookedStrategicPoints.first ?? "Set one concrete validation step in the next 48 hours before finalizing the decision."
+    }
+
+    private var isChatFirstFlow: Bool {
+        vm.matrixSetupReady || vm.activeDraft.chatPhase == .completed
     }
 
     private var decisionSelected: Bool {
@@ -2220,6 +3169,25 @@ private struct ResultsView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if let result, let winner {
                         summaryCard(result: result, winner: winner)
+                        resultsInsightSection(title: "Drivers", lines: insightBullets)
+                        resultsInsightSection(title: "Risks", lines: blindSpotBullets)
+                        resultsInsightSection(title: "Confidence", lines: confidenceBullets)
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Next Step")
+                                .font(ClarityType.smallCaps)
+                                .foregroundStyle(ClarityPalette.inkSoft)
+                            Text(nextStepText)
+                                .font(ClarityType.body)
+                                .foregroundStyle(ClarityPalette.ink)
+                        }
+                        .padding(18)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(ClarityPalette.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .stroke(ClarityPalette.accent.opacity(0.35), lineWidth: 1)
+                        )
 
                         Button {
                             Task {
@@ -2255,6 +3223,10 @@ private struct ResultsView: View {
                 .padding(.bottom, 24)
             }
         }
+        .onAppear {
+            vm.saveCurrentProject(modelContext: modelContext)
+            vm.loadRecent(modelContext: modelContext)
+        }
     }
 
     private var header: some View {
@@ -2276,6 +3248,7 @@ private struct ResultsView: View {
                 Spacer()
 
                 Button {
+                    vm.saveCurrentProject(modelContext: modelContext)
                     vm.screen = .home
                 } label: {
                     Image(systemName: "xmark")
@@ -2284,17 +3257,23 @@ private struct ResultsView: View {
                 .buttonStyle(.plain)
             }
 
-            Text(resultsStepLabel)
-                .font(ClarityType.title)
-                .foregroundStyle(ClarityPalette.inkSoft)
+            if !isChatFirstFlow {
+                Text(vm.expressModeEnabled && vm.expressModeAvailable ? "Step 3 of 3" : "Step 7 of 7")
+                    .font(ClarityType.title)
+                    .foregroundStyle(ClarityPalette.inkSoft)
 
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.gray.opacity(0.2))
-                    Capsule().fill(ClarityPalette.accent).frame(width: proxy.size.width)
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.gray.opacity(0.2))
+                        Capsule().fill(ClarityPalette.accent).frame(width: proxy.size.width)
+                    }
                 }
+                .frame(height: 4)
+            } else {
+                Text("AI decision summary")
+                    .font(ClarityType.title)
+                    .foregroundStyle(ClarityPalette.inkSoft)
             }
-            .frame(height: 4)
         }
         .padding(.horizontal, 24)
         .padding(.top, 12)
@@ -2303,7 +3282,8 @@ private struct ResultsView: View {
     private func summaryCard(result: RankingResult, winner: VendorResult) -> some View {
         let confidenceHigh = result.confidenceScore > 0.7
         let title = vm.activeDraft.title.trimmed.isEmpty ? "Decision Summary" : vm.activeDraft.title
-        let recommendation = vm.activeInsight?.winnerReasoning ?? winner.vendorName
+        let winnerLabel = optionLabel(for: winner.vendorID, fallback: winner.vendorName)
+        let recommendation = vm.activeDraft.decisionReport?.recommendation ?? vm.activeInsight?.winnerReasoning ?? winnerLabel
 
         return VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -2343,7 +3323,7 @@ private struct ResultsView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 let scoreText = String(format: "%.1f", winner.totalScore)
-                bullet("Your weighted analysis scored this option \(scoreText)/10, highest among all options")
+                bullet("Your weighted analysis scored \(winnerLabel) at \(scoreText)/10, highest among all options")
                 ForEach(insightBullets, id: \.self) { point in
                     bullet(point)
                 }
@@ -2362,7 +3342,7 @@ private struct ResultsView: View {
                 .buttonStyle(decisionChoiceStyle(selected: decisionSelected))
 
                 Button("Still thinking 🤔") {
-                    vm.setDecisionOutcome(decided: false)
+                    vm.beginStillThinkingChallengeFlow()
                 }
                 .buttonStyle(decisionChoiceStyle(selected: !decisionSelected))
             }
@@ -2386,6 +3366,27 @@ private struct ResultsView: View {
         )
     }
 
+    private func resultsInsightSection(title: String, lines: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(ClarityType.smallCaps)
+                .foregroundStyle(ClarityPalette.inkSoft)
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(lines, id: \.self) { line in
+                    bullet(line)
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(ClarityPalette.line, lineWidth: 1)
+        )
+    }
+
     private func bullet(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "checkmark")
@@ -2401,32 +3402,33 @@ private struct ResultsView: View {
     private func decisionChoiceStyle(selected: Bool) -> ClarityChoiceButtonStyle {
         ClarityChoiceButtonStyle(selected: selected)
     }
+
+    private func optionLabel(for vendorID: String, fallback: String) -> String {
+        if let exact = vm.activeDraft.vendors.first(where: { $0.id == vendorID })?.name.trimmed, exact.isNotEmpty {
+            return exact
+        }
+        let safeFallback = fallback.trimmed
+        return safeFallback.isEmpty ? "Leading option" : safeFallback
+    }
 }
 
 private struct HistoryView: View {
     @EnvironmentObject private var vm: AppViewModel
+    @Environment(\.modelContext) private var modelContext
     @State private var selectedFilter = "All"
 
     private let filters = ["All", "Work", "Personal", "Decided"]
 
     private var items: [HistoryRow] {
-        let rows: [HistoryRow]
-        if vm.recentProjects.isEmpty {
-            rows = [
-                HistoryRow(id: "sample-career", title: "Should I stay at my current job or accept the offer?", context: "Career", date: Date.now.addingTimeInterval(-86400), confidence: "High confidence", status: "Decided ✓"),
-                HistoryRow(id: "sample-personal", title: "Should I move to a new city for better opportunities?", context: "Personal", date: Date.now.addingTimeInterval(-86400 * 7), confidence: "Medium confidence", status: "Still thinking")
-            ]
-        } else {
-            rows = vm.recentProjects.map {
-                HistoryRow(
-                    id: $0.id,
-                    title: $0.title,
-                    context: $0.usageContextRaw.capitalized,
-                    date: $0.updatedAt,
-                    confidence: $0.confidenceScore >= 0.75 ? "High confidence" : "Medium confidence",
-                    status: $0.confidenceScore >= 0.75 ? "Decided ✓" : "Still thinking"
-                )
-            }
+        let rows = vm.recentProjects.map {
+            HistoryRow(
+                project: $0,
+                title: $0.title,
+                context: historyContextLabel(for: $0),
+                date: $0.updatedAt,
+                confidence: confidenceLabel(for: $0),
+                status: statusLabel(for: $0)
+            )
         }
 
         switch selectedFilter {
@@ -2467,48 +3469,67 @@ private struct HistoryView: View {
                     }
                 }
 
-                VStack(spacing: 12) {
-                    ForEach(items, id: \.id) { item in
-                        Button {
-                        } label: {
-                            VStack(alignment: .leading, spacing: 10) {
-                                HStack {
-                                    Text(item.context)
-                                        .font(ClarityType.caption.weight(.medium))
-                                        .padding(.horizontal, 11)
-                                        .padding(.vertical, 6)
-                                        .background(ClarityPalette.surfaceSoft, in: Capsule())
-                                    Spacer()
-                                    Text(item.status)
-                                        .font(ClarityType.caption.weight(.medium))
-                                        .padding(.horizontal, 11)
-                                        .padding(.vertical, 6)
-                                        .background(item.status.contains("Decided") ? ClarityPalette.green.opacity(0.12) : ClarityPalette.surfaceSoft, in: Capsule())
-                                        .foregroundStyle(item.status.contains("Decided") ? ClarityPalette.green : ClarityPalette.inkSoft)
+                if items.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("No saved decisions yet")
+                            .font(ClarityType.cardSerif)
+                            .foregroundStyle(ClarityPalette.ink)
+                        Text("Complete a decision and it will appear here with its status, date, and confidence.")
+                            .font(ClarityType.body)
+                            .foregroundStyle(ClarityPalette.inkSoft)
+                    }
+                    .padding(18)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .stroke(ClarityPalette.line, lineWidth: 1)
+                    )
+                } else {
+                    VStack(spacing: 12) {
+                        ForEach(items, id: \.id) { item in
+                            Button {
+                                vm.resumeDecision(item.project, modelContext: modelContext)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack {
+                                        Text(item.context)
+                                            .font(ClarityType.caption.weight(.medium))
+                                            .padding(.horizontal, 11)
+                                            .padding(.vertical, 6)
+                                            .background(ClarityPalette.surfaceSoft, in: Capsule())
+                                        Spacer()
+                                        Text(item.status)
+                                            .font(ClarityType.caption.weight(.medium))
+                                            .padding(.horizontal, 11)
+                                            .padding(.vertical, 6)
+                                            .background(item.status.contains("Decided") ? ClarityPalette.green.opacity(0.12) : ClarityPalette.surfaceSoft, in: Capsule())
+                                            .foregroundStyle(item.status.contains("Decided") ? ClarityPalette.green : ClarityPalette.inkSoft)
+                                    }
+
+                                    Text(item.title)
+                                        .font(.system(size: 18, weight: .bold, design: .serif))
+                                        .foregroundStyle(ClarityPalette.ink)
+                                        .fixedSize(horizontal: false, vertical: true)
+
+                                    Text(item.date.formatted(date: .abbreviated, time: .omitted))
+                                        .font(ClarityType.body)
+                                        .foregroundStyle(ClarityPalette.inkSoft)
+
+                                    Text(item.confidence)
+                                        .font(ClarityType.body)
+                                        .foregroundStyle(ClarityPalette.inkSoft)
                                 }
-
-                                Text(item.title)
-                                    .font(.system(size: 18, weight: .bold, design: .serif))
-                                    .foregroundStyle(ClarityPalette.ink)
-                                    .fixedSize(horizontal: false, vertical: true)
-
-                                Text(item.date.formatted(date: .abbreviated, time: .omitted))
-                                    .font(ClarityType.body)
-                                    .foregroundStyle(ClarityPalette.inkSoft)
-
-                                Text(item.confidence)
-                                    .font(ClarityType.body)
-                                    .foregroundStyle(ClarityPalette.inkSoft)
+                                .padding(18)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                        .stroke(ClarityPalette.line, lineWidth: 1)
+                                )
                             }
-                            .padding(18)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                    .stroke(ClarityPalette.line, lineWidth: 1)
-                            )
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -2516,15 +3537,51 @@ private struct HistoryView: View {
             .padding(.top, 20)
             .padding(.bottom, 24)
         }
+        .onAppear {
+            vm.loadRecent(modelContext: modelContext)
+        }
     }
 
     private struct HistoryRow: Identifiable {
-        let id: String
+        let project: RankingProjectEntity
         let title: String
         let context: String
         let date: Date
         let confidence: String
         let status: String
+
+        var id: String { project.id }
+    }
+
+    private func historyContextLabel(for project: RankingProjectEntity) -> String {
+        let category = project.categoryRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !category.isEmpty, category.lowercased() != DecisionCategory.business.rawValue {
+            return category.capitalized
+        }
+        return project.usageContextRaw.capitalized
+    }
+
+    private func confidenceLabel(for project: RankingProjectEntity) -> String {
+        switch project.confidenceScore {
+        case ..<0.45:
+            return "Low confidence"
+        case ..<0.75:
+            return "Medium confidence"
+        default:
+            return "High confidence"
+        }
+    }
+
+    private func statusLabel(for project: RankingProjectEntity) -> String {
+        let status = DecisionStatus(rawValue: project.statusRaw) ?? .inProgress
+        switch status {
+        case .decided:
+            return "Decided ✓"
+        case .pending, .inProgress:
+            return "Still thinking"
+        case .reviewDue:
+            return "Review due"
+        }
     }
 }
 
@@ -2536,7 +3593,7 @@ private struct ProfileView: View {
     }
 
     private var confidencePercent: Int {
-        guard !vm.recentProjects.isEmpty else { return 94 }
+        guard !vm.recentProjects.isEmpty else { return 0 }
         let avg = vm.recentProjects.map(\.confidenceScore).reduce(0, +) / Double(vm.recentProjects.count)
         return Int((avg * 100).rounded())
     }
@@ -2573,11 +3630,11 @@ private struct ProfileView: View {
                     Divider()
 
                     HStack {
-                        stat("\(max(12, vm.recentProjects.count))", label: "Decisions")
+                        stat("\(vm.recentProjects.count)", label: "Decisions")
                         Spacer()
-                        stat("\(max(8, completedCount))", label: "Completed")
+                        stat("\(completedCount)", label: "Completed")
                         Spacer()
-                        stat("\(max(94, confidencePercent))%", label: "Confidence")
+                        stat("\(confidencePercent)%", label: "Confidence")
                     }
                 }
                 .padding(18)
@@ -2895,6 +3952,56 @@ private struct ClarityTextInput: View {
     }
 }
 
+private struct ClarityPasswordTextField: UIViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeUIView(context: Context) -> UITextField {
+        let textField = UITextField(frame: .zero)
+        textField.delegate = context.coordinator
+        textField.addTarget(context.coordinator, action: #selector(Coordinator.textDidChange(_:)), for: .editingChanged)
+        textField.borderStyle = .none
+        textField.font = UIFont.preferredFont(forTextStyle: .body)
+        textField.textColor = UIColor(ClarityPalette.ink)
+        textField.tintColor = UIColor(ClarityPalette.ink)
+        textField.autocorrectionType = .no
+        textField.autocapitalizationType = .none
+        textField.spellCheckingType = .no
+        textField.smartQuotesType = .no
+        textField.smartDashesType = .no
+        textField.smartInsertDeleteType = .no
+        textField.textContentType = .none
+        textField.isSecureTextEntry = false
+        textField.clearButtonMode = .never
+        return textField
+    }
+
+    func updateUIView(_ uiView: UITextField, context: Context) {
+        if uiView.text != text {
+            uiView.text = text
+        }
+        if uiView.placeholder != placeholder {
+            uiView.placeholder = placeholder
+        }
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        @Binding private var text: String
+
+        init(text: Binding<String>) {
+            _text = text
+        }
+
+        @objc func textDidChange(_ sender: UITextField) {
+            text = sender.text ?? ""
+        }
+    }
+}
+
 private struct NotificationBellIcon: View {
     var body: some View {
         Circle()
@@ -3008,6 +4115,7 @@ private struct FlexibleChipLayout<Data: RandomAccessCollection, Content: View>: 
 final class SpeechTranscriber: ObservableObject {
     @Published var transcript: String = ""
     @Published var isRecording = false
+    @Published var lastError: String?
 
     private let speechRecognizer = SFSpeechRecognizer()
     private let audioEngine = AVAudioEngine()
@@ -3015,39 +4123,70 @@ final class SpeechTranscriber: ObservableObject {
     private var recognitionTask: SFSpeechRecognitionTask?
 
     func start() async {
-        guard await requestPermissions() else { return }
+        lastError = nil
+#if targetEnvironment(simulator)
+        lastError = "Voice capture is not available in the simulator. Use a physical iPhone."
+        return
+#endif
+        guard let speechRecognizer, speechRecognizer.isAvailable else {
+            lastError = "Speech recognition is not available right now."
+            return
+        }
+        guard await requestPermissions() else {
+            lastError = "Microphone or speech recognition permission was denied."
+            return
+        }
         stop()
 
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        recognitionRequest = request
-
-        let inputNode = audioEngine.inputNode
-        let recordingFormat = inputNode.outputFormat(forBus: 0)
-        inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
-            self?.recognitionRequest?.append(buffer)
-        }
-
-        audioEngine.prepare()
         do {
-            try AVAudioSession.sharedInstance().setCategory(.record, mode: .measurement, options: .duckOthers)
-            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.record, mode: .measurement, options: [.duckOthers])
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+            let availableInputs = audioSession.availableInputs ?? []
+            guard !availableInputs.isEmpty else {
+                lastError = "No microphone input is available on this device."
+                try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+                return
+            }
+
+            let inputNode = audioEngine.inputNode
+            let inputFormat = inputNode.inputFormat(forBus: 0)
+            let outputFormat = inputNode.outputFormat(forBus: 0)
+            guard let recordingFormat = validRecordingFormat(primary: inputFormat, secondary: outputFormat) else {
+                lastError = "The microphone input format is invalid on this device."
+                try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+                return
+            }
+
+            let request = SFSpeechAudioBufferRecognitionRequest()
+            request.shouldReportPartialResults = true
+            recognitionRequest = request
+
+            inputNode.removeTap(onBus: 0)
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
+                self?.recognitionRequest?.append(buffer)
+            }
+
+            recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
+                guard let self else { return }
+                if let result {
+                    self.transcript = result.bestTranscription.formattedString
+                }
+                if let error {
+                    self.lastError = error.localizedDescription
+                }
+                if error != nil || (result?.isFinal == true) {
+                    self.stop()
+                }
+            }
+
+            audioEngine.prepare()
             try audioEngine.start()
             isRecording = true
         } catch {
+            lastError = error.localizedDescription
             stop()
             return
-        }
-
-        recognitionTask = speechRecognizer?.recognitionTask(with: request) { [weak self] result, error in
-            guard let self else { return }
-            if let result {
-                self.transcript = result.bestTranscription.formattedString
-            }
-            if error != nil || (result?.isFinal == true) {
-                self.stop()
-            }
         }
     }
 
@@ -3059,10 +4198,25 @@ final class SpeechTranscriber: ObservableObject {
         recognitionTask = nil
         recognitionRequest = nil
         isRecording = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     func clearTranscript() {
         transcript = ""
+    }
+
+    private func validRecordingFormat(primary: AVAudioFormat, secondary: AVAudioFormat) -> AVAudioFormat? {
+        if isValid(primary) {
+            return primary
+        }
+        if isValid(secondary) {
+            return secondary
+        }
+        return nil
+    }
+
+    private func isValid(_ format: AVAudioFormat) -> Bool {
+        format.channelCount > 0 && format.sampleRate > 0
     }
 
     private func requestPermissions() async -> Bool {
@@ -3091,6 +4245,10 @@ final class SpeechTranscriber: ObservableObject {
 private extension String {
     var trimmed: String {
         trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var isNotEmpty: Bool {
+        !trimmed.isEmpty
     }
 
     var nonEmpty: String? {
