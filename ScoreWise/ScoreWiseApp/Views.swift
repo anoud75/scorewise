@@ -2260,15 +2260,23 @@ private struct RankingWizardView: View {
             } else {
                 ForEach(vm.activeDraft.clarifyingQuestions) { item in
                     questionCard(item.question) {
-                        ClarityTextInput(
-                            title: "Type your answer...",
-                            text: Binding(
-                                get: {
-                                    vm.activeDraft.clarifyingQuestions.first(where: { $0.id == item.id })?.answer ?? ""
-                                },
-                                set: { vm.updateClarifyingAnswer(questionID: item.id, answer: $0) }
+                        VStack(alignment: .leading, spacing: 10) {
+                            ClarityTextInput(
+                                title: "Type your answer...",
+                                text: Binding(
+                                    get: {
+                                        vm.activeDraft.clarifyingQuestions.first(where: { $0.id == item.id })?.answer ?? ""
+                                    },
+                                    set: { vm.updateClarifyingAnswer(questionID: item.id, answer: $0) }
+                                )
                             )
-                        )
+                            Button("Not relevant - refresh this question") {
+                                vm.regenerateClarifyingQuestion(questionID: item.id)
+                            }
+                            .buttonStyle(.plain)
+                            .font(ClarityType.caption.weight(.medium))
+                            .foregroundStyle(ClarityPalette.accent)
+                        }
                     }
                 }
             }
@@ -2484,13 +2492,13 @@ private struct RankingWizardView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
                         Text("CRITERION")
-                            .frame(width: 180, alignment: .leading)
+                            .frame(width: 220, alignment: .leading)
                         Text("WEIGHT")
                             .frame(width: 80, alignment: .leading)
                         ForEach(vm.activeDraft.vendors, id: \.id) { vendor in
                             Text(vendor.name.trimmed.isEmpty ? "UNNAMED" : vendor.name)
-                                .frame(width: 92, alignment: .leading)
-                                .lineLimit(1)
+                                .frame(width: 112, alignment: .leading)
+                                .lineLimit(2)
                         }
                     }
                     .font(.caption.weight(.semibold))
@@ -2510,7 +2518,7 @@ private struct RankingWizardView: View {
                             .font(.subheadline)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 11)
-                            .frame(width: 180)
+                            .frame(width: 220)
                             .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(ClarityPalette.line, lineWidth: 1))
 
@@ -2529,7 +2537,7 @@ private struct RankingWizardView: View {
                                     .font(.subheadline)
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 11)
-                                    .frame(width: 92)
+                                    .frame(width: 112)
                                     .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                                     .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(ClarityPalette.line, lineWidth: 1))
                             }
@@ -2616,7 +2624,7 @@ private struct RankingWizardView: View {
     private var challengeStep: some View {
         VStack(alignment: .leading, spacing: 14) {
             if vm.activeDraft.biasChallenges.isEmpty {
-                ProgressView("Generating challenge prompts...")
+                Text("Preparing challenge prompts...")
                     .font(ClarityType.body)
                     .foregroundStyle(ClarityPalette.inkSoft)
                     .frame(maxWidth: .infinity, minHeight: 320, alignment: .center)
@@ -2671,7 +2679,10 @@ private struct RankingWizardView: View {
     }
 
     private var reassuranceStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let rawReassurance = vm.activeDraft.postChallengeReassurance?.trimmed ?? ""
+        let reassurance = isGenericAIText(rawReassurance) ? vm.synthesizedReassuranceText() : rawReassurance
+
+        return VStack(alignment: .leading, spacing: 14) {
             Text("Reassurance")
                 .font(ClarityType.heroSerif)
                 .foregroundStyle(ClarityPalette.ink)
@@ -2680,7 +2691,7 @@ private struct RankingWizardView: View {
                 .font(ClarityType.title)
                 .foregroundStyle(ClarityPalette.inkSoft)
 
-            if let reassurance = vm.activeDraft.postChallengeReassurance, reassurance.trimmed.isNotEmpty {
+            if reassurance.isNotEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(reassurance)
                         .font(ClarityType.body)
@@ -2704,11 +2715,13 @@ private struct RankingWizardView: View {
 
     private var analysisStep: some View {
         let winner = previewResult.rankedVendors.first
-        let winnerLabel = winner.map { optionLabel(for: $0.vendorID, fallback: $0.vendorName) } ?? "Leading option"
+        let winnerLabel = winner.map { optionLabel(for: $0.vendorID, fallback: $0.vendorName) } ?? "Top option"
         let confidenceText: String = previewResult.confidenceScore >= 0.75 ? "HIGH CONFIDENCE" : "MEDIUM CONFIDENCE"
-        let recommendation = vm.activeDraft.decisionReport?.recommendation
+        let nearTie = leadGap(for: previewResult) < 0.2
+        let rawRecommendation = vm.activeDraft.decisionReport?.recommendation
             ?? vm.activeInsight?.winnerReasoning
             ?? winnerLabel
+        let recommendation = isGenericAIText(rawRecommendation) ? vm.synthesizedRecommendationText() : rawRecommendation
 
         return VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 16) {
@@ -2719,6 +2732,13 @@ private struct RankingWizardView: View {
                 Text(recommendation)
                     .font(ClarityType.sectionSerif)
                     .foregroundStyle(ClarityPalette.ink)
+
+                if nearTie {
+                    Text("These options are statistically tied. Use one external validation factor to break the tie.")
+                        .font(ClarityType.caption)
+                        .foregroundStyle(ClarityPalette.accent)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 Text(confidenceText)
                     .font(ClarityType.smallCaps)
@@ -3083,11 +3103,27 @@ private struct RankingWizardView: View {
     }
 
     private func optionLabel(for vendorID: String, fallback: String) -> String {
-        if let exact = vm.activeDraft.vendors.first(where: { $0.id == vendorID })?.name.trimmed, exact.isNotEmpty {
-            return exact
-        }
-        let safeFallback = fallback.trimmed
-        return safeFallback.isEmpty ? "Unnamed option" : safeFallback
+        vm.resolvedOptionLabel(vendorID: vendorID, fallback: fallback)
+    }
+
+    private func leadGap(for result: RankingResult) -> Double {
+        guard let first = result.rankedVendors.first else { return 0 }
+        guard result.rankedVendors.count > 1 else { return first.totalScore }
+        return max(0, first.totalScore - result.rankedVendors[1].totalScore)
+    }
+
+    private func isGenericAIText(_ text: String) -> Bool {
+        let lower = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lower.isEmpty { return true }
+        return lower.contains("need more context") ||
+            lower.contains("insufficient context") ||
+            lower.contains("i need more context") ||
+            lower.contains("vendor a") ||
+            lower.contains("vendor b") ||
+            lower.contains("option a") ||
+            lower.contains("option b") ||
+            lower.contains("candidate 1") ||
+            lower.contains("candidate 2")
     }
 }
 
@@ -3112,7 +3148,19 @@ private struct ResultsView: View {
         ]
     }
 
+    private var isNearTie: Bool {
+        guard let result else { return false }
+        return leadGap(for: result) < 0.2
+    }
+
     private var insightBullets: [String] {
+        if isNearTie {
+            return [
+                "The top options are effectively tied in the current scorecard.",
+                "Use one external validation signal to break the tie (reference check, trial task, or scenario test).",
+                "Avoid over-trusting tiny score differences."
+            ]
+        }
         if let report = vm.activeDraft.decisionReport, !report.drivers.isEmpty {
             return Array(report.drivers.prefix(3))
         }
@@ -3283,7 +3331,8 @@ private struct ResultsView: View {
         let confidenceHigh = result.confidenceScore > 0.7
         let title = vm.activeDraft.title.trimmed.isEmpty ? "Decision Summary" : vm.activeDraft.title
         let winnerLabel = optionLabel(for: winner.vendorID, fallback: winner.vendorName)
-        let recommendation = vm.activeDraft.decisionReport?.recommendation ?? vm.activeInsight?.winnerReasoning ?? winnerLabel
+        let rawRecommendation = vm.activeDraft.decisionReport?.recommendation ?? vm.activeInsight?.winnerReasoning ?? winnerLabel
+        let recommendation = isGenericAIText(rawRecommendation) ? vm.synthesizedRecommendationText() : rawRecommendation
 
         return VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -3338,6 +3387,7 @@ private struct ResultsView: View {
             HStack(spacing: 10) {
                 Button("I've decided ✓") {
                     vm.setDecisionOutcome(decided: true)
+                    vm.saveCurrentProject(modelContext: modelContext)
                 }
                 .buttonStyle(decisionChoiceStyle(selected: decisionSelected))
 
@@ -3404,11 +3454,27 @@ private struct ResultsView: View {
     }
 
     private func optionLabel(for vendorID: String, fallback: String) -> String {
-        if let exact = vm.activeDraft.vendors.first(where: { $0.id == vendorID })?.name.trimmed, exact.isNotEmpty {
-            return exact
-        }
-        let safeFallback = fallback.trimmed
-        return safeFallback.isEmpty ? "Leading option" : safeFallback
+        vm.resolvedOptionLabel(vendorID: vendorID, fallback: fallback)
+    }
+
+    private func leadGap(for result: RankingResult) -> Double {
+        guard let first = result.rankedVendors.first else { return 0 }
+        guard result.rankedVendors.count > 1 else { return first.totalScore }
+        return max(0, first.totalScore - result.rankedVendors[1].totalScore)
+    }
+
+    private func isGenericAIText(_ text: String) -> Bool {
+        let lower = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lower.isEmpty { return true }
+        return lower.contains("need more context") ||
+            lower.contains("insufficient context") ||
+            lower.contains("i need more context") ||
+            lower.contains("vendor a") ||
+            lower.contains("vendor b") ||
+            lower.contains("option a") ||
+            lower.contains("option b") ||
+            lower.contains("candidate 1") ||
+            lower.contains("candidate 2")
     }
 }
 
@@ -3589,7 +3655,7 @@ private struct ProfileView: View {
     @EnvironmentObject private var vm: AppViewModel
 
     private var completedCount: Int {
-        vm.recentProjects.filter { $0.confidenceScore >= 0.75 }.count
+        vm.recentProjects.filter { (DecisionStatus(rawValue: $0.statusRaw) ?? .inProgress) == .decided }.count
     }
 
     private var confidencePercent: Int {

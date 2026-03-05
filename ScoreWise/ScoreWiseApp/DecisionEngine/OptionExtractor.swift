@@ -14,8 +14,10 @@ struct OptionExtractor {
 
         extractShouldOptions(from: source).forEach { appendOption(&options, option: $0) }
         extractBetweenOptions(from: source).forEach { appendOption(&options, option: $0) }
+        extractVersusOptions(from: source).forEach { appendOption(&options, option: $0) }
         extractOfferRows(from: source).forEach { appendOption(&options, option: $0) }
         extractCandidateRows(from: source).forEach { appendOption(&options, option: $0) }
+        extractLabeledRows(from: source).forEach { appendOption(&options, option: $0) }
 
         for vendor in draft.vendors {
             let name = trim(vendor.name)
@@ -146,6 +148,26 @@ struct OptionExtractor {
         }
     }
 
+    private func extractVersusOptions(from text: String) -> [DecisionOptionSnapshot] {
+        guard let groups = firstRegexGroups(
+            pattern: #"(?i)([A-Za-z][A-Za-z0-9 '&.\-]{1,80})\s+vs\.?\s+([A-Za-z][A-Za-z0-9 '&.\-]{1,80})"#,
+            in: text
+        ), groups.count >= 2 else {
+            return []
+        }
+
+        return groups.prefix(2).compactMap { raw in
+            let label = sentenceCase(clean(raw))
+            guard !label.isEmpty else { return nil }
+            return DecisionOptionSnapshot(
+                label: label,
+                type: inferredType(label: label, recruiterMode: false),
+                description: "Option extracted from your comparison.",
+                aiSuggested: true
+            )
+        }
+    }
+
     private func extractCandidateRows(from text: String) -> [DecisionOptionSnapshot] {
         let source = text.replacingOccurrences(of: "\n", with: " ")
         guard let groups = firstRegexGroups(
@@ -169,6 +191,27 @@ struct OptionExtractor {
                     aiSuggested: true
                 )
             }
+    }
+
+    private func extractLabeledRows(from text: String) -> [DecisionOptionSnapshot] {
+        guard let rows = allRegexGroups(
+            pattern: #"(?im)^\s*(?:candidate|option)\s*(?:[A-H]|\d+)\s*[—:\-]\s*([^\n\r]+)\s*$"#,
+            in: text
+        ) else {
+            return []
+        }
+
+        return rows.compactMap { row in
+            guard let raw = row.first else { return nil }
+            let label = sentenceCase(clean(raw))
+            guard !label.isEmpty else { return nil }
+            return DecisionOptionSnapshot(
+                label: label,
+                type: inferredType(label: label, recruiterMode: false),
+                description: "Option extracted from labeled narrative rows.",
+                aiSuggested: true
+            )
+        }
     }
 
     private func optionKind(for label: String) -> OptionKind {
