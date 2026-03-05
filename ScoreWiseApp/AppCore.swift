@@ -292,7 +292,7 @@ final class AppViewModel: ObservableObject {
         optionsValidationMessage = nil
 
         activeDraft.contextNarrative = trimmed
-        activeDraft.title = String(trimmed.prefix(56))
+        activeDraft.title = truncatedTitle(from: trimmed, maxLength: 56)
         activeDraft.chatPhase = .collecting
         activeDraft.frameworksUsed = []
         activeDraft.postChallengeReassurance = nil
@@ -552,6 +552,46 @@ final class AppViewModel: ObservableObject {
         activeDraft.lastUpdatedAt = .now
     }
 
+    func regenerateClarifyingQuestion(questionID: String) {
+        guard let index = activeDraft.clarifyingQuestions.firstIndex(where: { $0.id == questionID }) else { return }
+        let rejected = activeDraft.clarifyingQuestions[index].question.trimmed
+        let existing = Set(activeDraft.clarifyingQuestions.map { $0.question.trimmed.lowercased() })
+
+        Task {
+            busyMessage = "Refreshing question..."
+            defer { busyMessage = nil }
+            do {
+                let remote = try await services.ai.generateClarifyingQuestions(for: activeDraft, userProfile: userAIProfile)
+                    .map { $0.question.trimmed }
+                    .filter { !$0.isEmpty }
+                let deterministic = DecisionEngine.shared
+                    .generateClarifyingQuestions(draft: activeDraft, userProfile: userAIProfile)
+                    .map { $0.question.trimmed }
+                    .filter { !$0.isEmpty }
+
+                let candidates = (remote + deterministic)
+                    .filter { $0.caseInsensitiveCompare(rejected) != .orderedSame }
+                    .filter { !existing.contains($0.lowercased()) }
+
+                guard let replacement = candidates.first else { return }
+                activeDraft.clarifyingQuestions[index].question = replacement
+                activeDraft.clarifyingQuestions[index].answer = ""
+                activeDraft.lastUpdatedAt = .now
+            } catch {
+                if let deterministic = DecisionEngine.shared
+                    .generateClarifyingQuestions(draft: activeDraft, userProfile: userAIProfile)
+                    .map({ $0.question.trimmed })
+                    .first(where: { $0.caseInsensitiveCompare(rejected) != .orderedSame && !existing.contains($0.lowercased()) }) {
+                    activeDraft.clarifyingQuestions[index].question = deterministic
+                    activeDraft.clarifyingQuestions[index].answer = ""
+                    activeDraft.lastUpdatedAt = .now
+                } else {
+                    lastError = error.localizedDescription
+                }
+            }
+        }
+    }
+
     func suggestOptionsFromClarifyingAnswers() {
         guard activeDraft.clarifyingQuestions.contains(where: { !$0.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return }
 
@@ -563,11 +603,16 @@ final class AppViewModel: ObservableObject {
                 applyEvidenceMetadata(extractedEvidence)
                 try await refreshDecisionBrief(extractedEvidence: extractedEvidence.map(\.extractedText).filter { !$0.isEmpty })
                 let options = try await services.ai.suggestDecisionOptions(for: activeDraft, userProfile: userAIProfile)
+                let fallbackOptions = extractOptionNamesFromNarrative()
                 if !options.isEmpty {
                     mergeSuggestedOptions(options)
                 }
+                if options.isEmpty || meaningfulVendorCount < 2 {
+                    mergeSuggestedOptions(fallbackOptions)
+                }
                 busyMessage = nil
             } catch {
+                mergeSuggestedOptions(extractOptionNamesFromNarrative())
                 busyMessage = nil
                 lastError = error.localizedDescription
             }
@@ -1118,6 +1163,84 @@ final class AppViewModel: ObservableObject {
             .explicitOptions
             .filter(\.isExplicitNamed)
             .map(\.label)
+    }
+
+    private func extractOptionNamesFromNarrative() -> [DecisionOptionSnapshot] {
+        let explicit = DecisionEngine.shared
+            .parse(draft: activeDraft, extractedEvidence: [], userProfile: userAIProfile)
+            .explicitOptions
+            .filter(\.isExplicitNamed)
+        guard explicit.count >= 2 else { return [] }
+        return Array(explicit.prefix(8))
+    }
+
+    func resolvedOptionLabel(vendorID: String, fallback: String? = nil) -> String {
+        if let exact = activeDraft.vendors.first(where: { $0.id == vendorID })?.name.trimmed, exact.isNotEmpty {
+            return exact
+        }
+        let fallbackName = fallback?.trimmed ?? ""
+        if fallbackName.isNotEmpty, !isGenericOptionLabel(fallbackName) {
+            return fallbackName
+        }
+        if let resultName = activeResult?.rankedVendors.first(where: { $0.vendorID == vendorID })?.vendorName.trimmed,
+           resultName.isNotEmpty,
+           !isGenericOptionLabel(resultName) {
+            return resultName
+        }
+        return "Top option"
+    }
+
+    func synthesizedRecommendationText() -> String {
+        guard let result = activeResult, let winner = result.rankedVendors.first else {
+            return "Choose the option that best matches your highest-weight criterion and hard constraints."
+        }
+        let winnerLabel = resolvedOptionLabel(vendorID: winner.vendorID, fallback: winner.vendorName)
+        let margin = {
+            guard result.rankedVendors.count > 1 else { return winner.totalScore }
+            return max(0, winner.totalScore - result.rankedVendors[1].totalScore)
+        }()
+        let topCriteria = activeDraft.criteria
+            .sorted { $0.weightPercent > $1.weightPercent }
+            .prefix(2)
+            .map(\.name)
+            .joined(separator: " and ")
+        if margin < 0.2 {
+            return "\(winnerLabel) is currently leading, but the score difference is very small. Treat this as a near tie and decide using the highest-risk unmodeled factor."
+        }
+        let criteriaText = topCriteria.isEmpty ? "your weighted criteria" : topCriteria
+        return "\(winnerLabel) leads by \(String(format: "%.1f", margin)) points based on \(criteriaText)."
+    }
+
+    func synthesizedReassuranceText() -> String {
+        let recommendation = synthesizedRecommendationText()
+        let answeredCount = activeDraft.biasChallenges.filter { !$0.response.trimmed.isEmpty }.count
+        if answeredCount == 0 {
+            return "\(recommendation) Capture one concrete risk in writing, run one validation check this week, then decide."
+        }
+        return "\(recommendation) Your challenge-check responses show deliberate thinking. Validate the biggest remaining uncertainty, then commit."
+    }
+
+    private func isGenericOptionLabel(_ value: String) -> Bool {
+        let lower = value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return lower.hasPrefix("vendor ") || lower.hasPrefix("option ") || lower.hasPrefix("candidate ")
+    }
+
+    private func truncatedTitle(from text: String, maxLength: Int) -> String {
+        let trimmed = text.trimmed
+        guard trimmed.count > maxLength else { return trimmed }
+        let words = trimmed.split(separator: " ")
+        var current = ""
+        for word in words {
+            let candidate = current.isEmpty ? String(word) : "\(current) \(word)"
+            if candidate.count > maxLength {
+                break
+            }
+            current = candidate
+        }
+        if current.isEmpty {
+            return "\(String(trimmed.prefix(maxLength)).trimmed)..."
+        }
+        return current.hasSuffix("...") ? current : "\(current)..."
     }
 
     private func trackFlowEvent(_ name: String, details: String = "") {

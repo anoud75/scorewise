@@ -2256,6 +2256,7 @@ final class FirebaseFunctionsAIService: AIservicing {
             let result = try await functions.httpsCallable("suggestRankingInputs").call(payload)
             return parseSuggestedInputs(result.data, draft: draft)
         } catch {
+            logAIFallback(functionName: "suggestRankingInputs", projectID: draft.id, phase: context.rawValue, error: error)
             return try await fallback.suggestRankingInputs(for: draft, context: context, extractedEvidence: extractedEvidence, userProfile: userProfile)
         }
     }
@@ -2272,6 +2273,7 @@ final class FirebaseFunctionsAIService: AIservicing {
             let result = try await functions.httpsCallable("generateClarifyingQuestions").call(payload)
             return Self.parseClarifyingQuestions(result.data)
         } catch {
+            logAIFallback(functionName: "generateClarifyingQuestions", projectID: draft.id, error: error)
             return try await fallback.generateClarifyingQuestions(for: draft, userProfile: userProfile)
         }
     }
@@ -2289,6 +2291,7 @@ final class FirebaseFunctionsAIService: AIservicing {
             let result = try await functions.httpsCallable("suggestDecisionOptions").call(payload)
             return Self.parseOptions(result.data)
         } catch {
+            logAIFallback(functionName: "suggestDecisionOptions", projectID: draft.id, error: error)
             return try await fallback.suggestDecisionOptions(for: draft, userProfile: userProfile)
         }
     }
@@ -2307,6 +2310,7 @@ final class FirebaseFunctionsAIService: AIservicing {
             let result = try await functions.httpsCallable("generateBiasChallenges").call(payload)
             return Self.parseBiasChallenges(result.data)
         } catch {
+            logAIFallback(functionName: "generateBiasChallenges", projectID: draft.id, error: error)
             return try await fallback.generateBiasChallenges(for: draft, preferredOption: preferredOption, userProfile: userProfile)
         }
     }
@@ -2329,6 +2333,7 @@ final class FirebaseFunctionsAIService: AIservicing {
             }
             let result = try await functions.httpsCallable("decisionChat").call(payload)
             guard let dictionary = result.data as? [String: Any] else {
+                logAIFallback(functionName: "decisionChat", projectID: projectID, phase: phase, error: ScoreWiseServiceError.featureUnavailable("Invalid callable payload shape"))
                 return try await fallback.decisionChat(projectID: projectID, phase: phase, message: message, draft: draft, userProfile: userProfile)
             }
             let content: String
@@ -2353,6 +2358,7 @@ final class FirebaseFunctionsAIService: AIservicing {
             let actions = dictionary["recommendedActions"] as? [String] ?? []
             return AIChatResponse(content: content, recommendedActions: actions)
         } catch {
+            logAIFallback(functionName: "decisionChat", projectID: projectID, phase: phase, error: error)
             return try await fallback.decisionChat(projectID: projectID, phase: phase, message: message, draft: draft, userProfile: userProfile)
         }
     }
@@ -2391,6 +2397,7 @@ final class FirebaseFunctionsAIService: AIservicing {
             }
             let raw = try await functions.httpsCallable("generateInsights").call(payload)
             guard let dictionary = raw.data as? [String: Any] else {
+                logAIFallback(functionName: "generateInsights", projectID: draft.id, error: ScoreWiseServiceError.featureUnavailable("Invalid callable payload shape"))
                 return try await fallback.generateInsights(draft: draft, result: result, userProfile: userProfile)
             }
             return InsightReportDraft(
@@ -2401,8 +2408,14 @@ final class FirebaseFunctionsAIService: AIservicing {
                 sensitivityFindings: dictionary["sensitivityFindings"] as? [String] ?? []
             )
         } catch {
+            logAIFallback(functionName: "generateInsights", projectID: draft.id, error: error)
             return try await fallback.generateInsights(draft: draft, result: result, userProfile: userProfile)
         }
+    }
+
+    private func logAIFallback(functionName: String, projectID: String, phase: String? = nil, error: Error) {
+        let phaseTag = phase?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? ", phase=\(phase ?? "")" : ""
+        print("⚠️ AI_FALLBACK function=\(functionName), projectId=\(projectID)\(phaseTag), error=\(error.localizedDescription)")
     }
 
     private static func userProfileDictionary(_ profile: AIUserProfile) -> [String: Any] {
