@@ -1,0 +1,646 @@
+[
+  {
+    "id": "g001",
+    "domain": "general_decision",
+    "principle": "Define the decision in one sentence before evaluating options.",
+    "whenToApply": "The user narrative is broad or mixes multiple decisions.",
+    "questionTemplates": [
+      "Which single decision are you making today?",
+      "What outcome would make this decision clearly successful?"
+    ],
+    "criteriaSeeds": ["goal clarity", "scope fit"],
+    "biasSignals": ["problem framing drift"],
+    "constraintPatterns": ["must", "cannot", "non-negotiable"],
+    "source": { "fileName": "2918331-PPT-of-Decision-making.pdf", "sectionLabel": "Decision definition step" }
+  },
+  {
+    "id": "g002",
+    "domain": "general_decision",
+    "principle": "Generate alternatives before rating any one option.",
+    "whenToApply": "The user anchors on a favorite too early.",
+    "questionTemplates": [
+      "What is your strongest alternative to this option?",
+      "If this option disappeared, what would you do next?"
+    ],
+    "criteriaSeeds": ["option quality", "optionality"],
+    "biasSignals": ["anchoring", "premature closure"],
+    "constraintPatterns": ["if none existed"],
+    "source": { "fileName": "370332277-Decision-Making.pdf", "sectionLabel": "Identify alternatives" }
+  },
+  {
+    "id": "g003",
+    "domain": "general_decision",
+    "principle": "Use evidence quality to calibrate confidence.",
+    "whenToApply": "Claims are strong but evidence is weak.",
+    "questionTemplates": [
+      "What hard evidence supports this claim?",
+      "Which score is based on assumption rather than proof?"
+    ],
+    "criteriaSeeds": ["evidence strength", "verifiability"],
+    "biasSignals": ["overconfidence"],
+    "constraintPatterns": ["evidence", "proof", "data"],
+    "source": { "fileName": "117874642-decision-making.pdf", "sectionLabel": "Weigh evidence" }
+  },
+  {
+    "id": "g004",
+    "domain": "general_decision",
+    "principle": "Evaluate short-term and long-term consequences separately.",
+    "whenToApply": "Decision has trade-offs over time.",
+    "questionTemplates": [
+      "Which option wins in 3 months?",
+      "Which option wins in 3 years?"
+    ],
+    "criteriaSeeds": ["near-term impact", "long-term value"],
+    "biasSignals": ["present bias"],
+    "constraintPatterns": ["timeline", "future", "long term"],
+    "source": { "fileName": "429727159-Decision-Making-Ppt.pptx", "sectionLabel": "Consequence analysis" }
+  },
+  {
+    "id": "g005",
+    "domain": "general_decision",
+    "principle": "Include downside and reversibility as explicit criteria.",
+    "whenToApply": "Choice could be hard to undo.",
+    "questionTemplates": [
+      "Which option has the lowest irreversible downside?",
+      "How costly is it to reverse this option?"
+    ],
+    "criteriaSeeds": ["downside risk", "reversibility"],
+    "biasSignals": ["optimism bias"],
+    "constraintPatterns": ["irreversible", "exit", "lock-in"],
+    "source": { "fileName": "2918331-PPT-of-Decision-making.pdf", "sectionLabel": "Risk and consequences" }
+  },
+  {
+    "id": "g006",
+    "domain": "general_decision",
+    "principle": "Separate non-negotiable constraints from weighted preferences.",
+    "whenToApply": "User has hard rules like budget, location, visa, salary floor.",
+    "questionTemplates": [
+      "Which requirement is non-negotiable?",
+      "Which preference is flexible if trade-offs improve?"
+    ],
+    "criteriaSeeds": ["constraint compliance", "preference fit"],
+    "biasSignals": ["constraint neglect"],
+    "constraintPatterns": ["minimum", "max", "must have", "cannot"],
+    "source": { "fileName": "117874642-decision-making.pdf", "sectionLabel": "Problem requirements" }
+  },
+  {
+    "id": "g007",
+    "domain": "general_decision",
+    "principle": "Use closed-ended questions to reduce ambiguity before scoring.",
+    "whenToApply": "Input is narrative-heavy and unclear.",
+    "questionTemplates": [
+      "Is this constraint strict: yes or no?",
+      "Rate risk tolerance from 1 to 5."
+    ],
+    "criteriaSeeds": ["clarity", "decision readiness"],
+    "biasSignals": ["ambiguity effect"],
+    "constraintPatterns": ["yes/no", "scale", "range"],
+    "source": { "fileName": "370332277-Decision-Making.pdf", "sectionLabel": "Information gathering" }
+  },
+  {
+    "id": "g008",
+    "domain": "general_decision",
+    "principle": "Avoid overlapping criteria; each criterion should measure one thing.",
+    "whenToApply": "Criteria list duplicates similar concepts.",
+    "questionTemplates": [
+      "Are any two criteria measuring the same concept?",
+      "Which criterion can be merged or removed?"
+    ],
+    "criteriaSeeds": ["criterion independence", "coverage completeness"],
+    "biasSignals": ["double counting"],
+    "constraintPatterns": ["overlap", "duplicate"],
+    "source": { "fileName": "429727159-Decision-Making-Ppt.pptx", "sectionLabel": "Rational model structure" }
+  },
+  {
+    "id": "g009",
+    "domain": "general_decision",
+    "principle": "Score differences should reflect evidence differences, not arbitrary parity.",
+    "whenToApply": "Model outputs near-identical scores repeatedly.",
+    "questionTemplates": [
+      "Which criterion has strongest evidence-based separation?",
+      "Where are options truly tied and why?"
+    ],
+    "criteriaSeeds": ["score discrimination", "evidence-linked scoring"],
+    "biasSignals": ["false equivalence"],
+    "constraintPatterns": ["tie", "same score", "equal"],
+    "source": { "fileName": "117874642-decision-making.pdf", "sectionLabel": "Evidence comparison" }
+  },
+  {
+    "id": "g010",
+    "domain": "general_decision",
+    "principle": "Capture stakeholder impact as a distinct dimension.",
+    "whenToApply": "Decision affects team, family, or manager expectations.",
+    "questionTemplates": [
+      "Who is most affected by this decision?",
+      "Whose approval is required for success?"
+    ],
+    "criteriaSeeds": ["stakeholder alignment", "adoption risk"],
+    "biasSignals": ["egocentric bias"],
+    "constraintPatterns": ["team", "family", "manager", "stakeholder"],
+    "source": { "fileName": "737877950-CHARACTER-MODULE-5-6-7-AND-8.docx", "sectionLabel": "Social consequences" }
+  },
+  {
+    "id": "g011",
+    "domain": "general_decision",
+    "principle": "Use pre-mortem to surface hidden failure modes.",
+    "whenToApply": "User is confident but risk map is thin.",
+    "questionTemplates": [
+      "If this fails in 6 months, what likely caused it?",
+      "What early warning sign would indicate failure?"
+    ],
+    "criteriaSeeds": ["failure likelihood", "mitigation readiness"],
+    "biasSignals": ["planning fallacy"],
+    "constraintPatterns": ["fail", "risk", "warning"],
+    "source": { "fileName": "370332277-Decision-Making.pdf", "sectionLabel": "Risk review" }
+  },
+  {
+    "id": "g012",
+    "domain": "general_decision",
+    "principle": "Use an action review checkpoint after decision execution.",
+    "whenToApply": "User asks for post-decision confidence or follow-up.",
+    "questionTemplates": [
+      "What metric will confirm this choice worked?",
+      "When will you review and re-evaluate this decision?"
+    ],
+    "criteriaSeeds": ["monitorability", "feedback loop"],
+    "biasSignals": ["outcome neglect"],
+    "constraintPatterns": ["review date", "checkpoint"],
+    "source": { "fileName": "2918331-PPT-of-Decision-making.pdf", "sectionLabel": "Review decision and consequences" }
+  },
+  {
+    "id": "g013",
+    "domain": "general_decision",
+    "principle": "Use confidence bands: low confidence requires more validation, not stronger language.",
+    "whenToApply": "Evidence quantity is small or conflicting.",
+    "questionTemplates": [
+      "How confident are you from 0 to 100?",
+      "What one fact would most increase confidence?"
+    ],
+    "criteriaSeeds": ["confidence", "validation need"],
+    "biasSignals": ["certainty illusion"],
+    "constraintPatterns": ["confidence", "uncertain"],
+    "source": { "fileName": "117874642-decision-making.pdf", "sectionLabel": "Evaluate results" }
+  },
+  {
+    "id": "g014",
+    "domain": "general_decision",
+    "principle": "Distinguish decision option from implementation strategy.",
+    "whenToApply": "Options mix comparables with tactics like pilot or negotiate.",
+    "questionTemplates": [
+      "Are all options the same comparison type?",
+      "Is this item a strategy rather than an option?"
+    ],
+    "criteriaSeeds": ["option comparability"],
+    "biasSignals": ["category confusion"],
+    "constraintPatterns": ["pilot", "negotiate", "hybrid"],
+    "source": { "fileName": "429727159-Decision-Making-Ppt.pptx", "sectionLabel": "Alternative quality" }
+  },
+  {
+    "id": "g015",
+    "domain": "general_decision",
+    "principle": "Use opportunity cost as a first-class criterion.",
+    "whenToApply": "Choosing one option blocks another meaningful path.",
+    "questionTemplates": [
+      "What are you giving up by choosing this option?",
+      "Which forgone benefit is most costly?"
+    ],
+    "criteriaSeeds": ["opportunity cost", "strategic sacrifice"],
+    "biasSignals": ["omission bias"],
+    "constraintPatterns": ["give up", "miss out", "opportunity cost"],
+    "source": { "fileName": "370332277-Decision-Making.pdf", "sectionLabel": "Alternative trade-offs" }
+  },
+  {
+    "id": "r001",
+    "domain": "recruitment_selection",
+    "principle": "Compare candidates on role-specific competencies, not general impression.",
+    "whenToApply": "Recruiter decision between candidates.",
+    "questionTemplates": [
+      "Which candidate best matches the must-have competency list?",
+      "Who has strongest evidence for immediate role impact?"
+    ],
+    "criteriaSeeds": ["role fit", "core competency match"],
+    "biasSignals": ["halo effect"],
+    "constraintPatterns": ["must-have skills", "required competency"],
+    "source": { "fileName": "320981096-Recruitment-and-Selection.pdf", "sectionLabel": "Selection criteria" }
+  },
+  {
+    "id": "r002",
+    "domain": "recruitment_selection",
+    "principle": "Separate potential from proven execution in scoring.",
+    "whenToApply": "High-potential candidate competes with proven performer.",
+    "questionTemplates": [
+      "Do you prioritize immediate execution or future potential?",
+      "How much ramp-up time is acceptable?"
+    ],
+    "criteriaSeeds": ["execution readiness", "growth potential"],
+    "biasSignals": ["projection bias"],
+    "constraintPatterns": ["ramp-up", "time to productivity"],
+    "source": { "fileName": "866108547-UNIT-4-STAFFING.pdf", "sectionLabel": "Selection trade-offs" }
+  },
+  {
+    "id": "r003",
+    "domain": "recruitment_selection",
+    "principle": "Treat compensation range as a constraint before weighted scoring.",
+    "whenToApply": "Budget cap or salary band is defined.",
+    "questionTemplates": [
+      "Is this candidate within approved compensation range?",
+      "Is salary flexibility available: yes or no?"
+    ],
+    "criteriaSeeds": ["compensation fit", "budget compliance"],
+    "biasSignals": ["wishful budgeting"],
+    "constraintPatterns": ["salary band", "comp cap", "budget cap"],
+    "source": { "fileName": "866108547-UNIT-4-STAFFING.pdf", "sectionLabel": "Compensation constraints" }
+  },
+  {
+    "id": "r004",
+    "domain": "recruitment_selection",
+    "principle": "Evaluate culture and team fit as evidence-backed behavior indicators.",
+    "whenToApply": "Panel is split on team fit narratives.",
+    "questionTemplates": [
+      "What observed behavior supports this team-fit claim?",
+      "Did any interviewer flag collaboration concerns?"
+    ],
+    "criteriaSeeds": ["team fit", "collaboration evidence"],
+    "biasSignals": ["similarity bias"],
+    "constraintPatterns": ["team fit", "culture"],
+    "source": { "fileName": "320981096-Recruitment-and-Selection.pdf", "sectionLabel": "Interview evaluation" }
+  },
+  {
+    "id": "r005",
+    "domain": "recruitment_selection",
+    "principle": "Use structured interview evidence over charisma.",
+    "whenToApply": "Strong interviewer excitement but mixed objective signals.",
+    "questionTemplates": [
+      "Which interview evidence is behavior-based and verifiable?",
+      "Are ratings consistent across interviewers?"
+    ],
+    "criteriaSeeds": ["interview signal quality", "consistency across panel"],
+    "biasSignals": ["charisma bias"],
+    "constraintPatterns": ["interview score", "panel disagreement"],
+    "source": { "fileName": "866108547-UNIT-4-STAFFING.pdf", "sectionLabel": "Selection tools" }
+  },
+  {
+    "id": "r006",
+    "domain": "recruitment_selection",
+    "principle": "Check recency bias in final candidate ranking.",
+    "whenToApply": "Most recent interview dominates memory.",
+    "questionTemplates": [
+      "Would ranking change if interview order was randomized?",
+      "Which candidate evidence came from earlier rounds?"
+    ],
+    "criteriaSeeds": ["evidence recency robustness"],
+    "biasSignals": ["recency bias"],
+    "constraintPatterns": ["last interview", "recent"],
+    "source": { "fileName": "320981096-Recruitment-and-Selection.pdf", "sectionLabel": "Selection errors" }
+  },
+  {
+    "id": "r007",
+    "domain": "recruitment_selection",
+    "principle": "Distinguish mandatory requirements from trainable gaps.",
+    "whenToApply": "Candidate lacks one requirement but has growth potential.",
+    "questionTemplates": [
+      "Is this gap mandatory now or trainable in 90 days?",
+      "What training cost is acceptable for this hire?"
+    ],
+    "criteriaSeeds": ["must-have compliance", "trainability"],
+    "biasSignals": ["all-or-nothing thinking"],
+    "constraintPatterns": ["mandatory", "trainable", "must have"],
+    "source": { "fileName": "866108547-UNIT-4-STAFFING.pdf", "sectionLabel": "Recruitment policy" }
+  },
+  {
+    "id": "r008",
+    "domain": "recruitment_selection",
+    "principle": "Account for attrition risk and retention likelihood in hiring choice.",
+    "whenToApply": "Candidates differ in tenure likelihood.",
+    "questionTemplates": [
+      "Which candidate is most likely to stay 18 months?",
+      "What retention risk indicators exist?"
+    ],
+    "criteriaSeeds": ["retention risk", "stability"],
+    "biasSignals": ["short-termism"],
+    "constraintPatterns": ["attrition", "retention", "tenure"],
+    "source": { "fileName": "320981096-Recruitment-and-Selection.pdf", "sectionLabel": "Retention considerations" }
+  },
+  {
+    "id": "r009",
+    "domain": "recruitment_selection",
+    "principle": "Check reference and background signals before final recommendation.",
+    "whenToApply": "Decision made before references are complete.",
+    "questionTemplates": [
+      "Are reference checks completed for all finalists?",
+      "Did any verification signal conflict with interviews?"
+    ],
+    "criteriaSeeds": ["reference quality", "verification integrity"],
+    "biasSignals": ["confirmation bias"],
+    "constraintPatterns": ["reference", "background check", "verification"],
+    "source": { "fileName": "866108547-UNIT-4-STAFFING.pdf", "sectionLabel": "Final selection controls" }
+  },
+  {
+    "id": "r010",
+    "domain": "recruitment_selection",
+    "principle": "Evaluate manager-candidate working style compatibility explicitly.",
+    "whenToApply": "Role has high manager dependence.",
+    "questionTemplates": [
+      "Is manager working style compatible with this candidate?",
+      "Is autonomy expectation aligned: yes or no?"
+    ],
+    "criteriaSeeds": ["manager fit", "working style alignment"],
+    "biasSignals": ["similar-to-me bias"],
+    "constraintPatterns": ["manager fit", "working style", "autonomy"],
+    "source": { "fileName": "320981096-Recruitment-and-Selection.pdf", "sectionLabel": "Supervisor alignment" }
+  },
+  {
+    "id": "r011",
+    "domain": "recruitment_selection",
+    "principle": "Use role criticality to weight criteria, not personal preference.",
+    "whenToApply": "Panel debates weights without role-risk logic.",
+    "questionTemplates": [
+      "Which criterion failure would hurt business outcomes most?",
+      "Should this criterion weight increase based on role criticality?"
+    ],
+    "criteriaSeeds": ["business impact", "criticality-weighted fit"],
+    "biasSignals": ["preference bias"],
+    "constraintPatterns": ["critical role", "business impact"],
+    "source": { "fileName": "866108547-UNIT-4-STAFFING.pdf", "sectionLabel": "Role analysis" }
+  },
+  {
+    "id": "r012",
+    "domain": "recruitment_selection",
+    "principle": "Include onboarding burden as a cost criterion.",
+    "whenToApply": "Team capacity for onboarding is limited.",
+    "questionTemplates": [
+      "Can the team support this onboarding demand now?",
+      "Which candidate requires lowest onboarding overhead?"
+    ],
+    "criteriaSeeds": ["onboarding load", "time to independence"],
+    "biasSignals": ["hidden cost neglect"],
+    "constraintPatterns": ["onboarding", "training load"],
+    "source": { "fileName": "866108547-UNIT-4-STAFFING.pdf", "sectionLabel": "Induction planning" }
+  },
+  {
+    "id": "r013",
+    "domain": "recruitment_selection",
+    "principle": "Treat visa and location eligibility as hard filters before scores.",
+    "whenToApply": "Cross-border or on-site requirements exist.",
+    "questionTemplates": [
+      "Does each candidate satisfy visa requirements now?",
+      "Is relocation/on-site attendance feasible?"
+    ],
+    "criteriaSeeds": ["legal eligibility", "location feasibility"],
+    "biasSignals": ["constraint override"],
+    "constraintPatterns": ["visa", "work permit", "location", "on-site"],
+    "source": { "fileName": "320981096-Recruitment-and-Selection.pdf", "sectionLabel": "Employment eligibility" }
+  },
+  {
+    "id": "r014",
+    "domain": "recruitment_selection",
+    "principle": "Use score evidence from work samples when available.",
+    "whenToApply": "Practical assessments exist for finalists.",
+    "questionTemplates": [
+      "Which candidate performed best on role-relevant work sample?",
+      "How predictive is this test for real job tasks?"
+    ],
+    "criteriaSeeds": ["work sample performance", "predictive validity"],
+    "biasSignals": ["interview overweighting"],
+    "constraintPatterns": ["case study", "work sample", "assessment"],
+    "source": { "fileName": "866108547-UNIT-4-STAFFING.pdf", "sectionLabel": "Selection tests" }
+  },
+  {
+    "id": "r015",
+    "domain": "recruitment_selection",
+    "principle": "Separate role fit from employer brand attraction.",
+    "whenToApply": "Prestige of company/client distorts candidate evaluation.",
+    "questionTemplates": [
+      "Are we overvaluing brand prestige over role fit evidence?",
+      "Which score changes if prestige is removed?"
+    ],
+    "criteriaSeeds": ["role relevance", "prestige-adjusted fit"],
+    "biasSignals": ["prestige bias"],
+    "constraintPatterns": ["brand", "prestige", "name recognition"],
+    "source": { "fileName": "320981096-Recruitment-and-Selection.pdf", "sectionLabel": "Selection bias controls" }
+  },
+  {
+    "id": "r016",
+    "domain": "recruitment_selection",
+    "principle": "When candidates are near-tied, run targeted evidence check instead of forcing certainty.",
+    "whenToApply": "Top two candidates have minimal score gap.",
+    "questionTemplates": [
+      "Which missing data point would break this tie?",
+      "Can we run one focused reference question to resolve tie?"
+    ],
+    "criteriaSeeds": ["tie-breaker evidence", "decision confidence"],
+    "biasSignals": ["false precision"],
+    "constraintPatterns": ["near tie", "thin margin"],
+    "source": { "fileName": "866108547-UNIT-4-STAFFING.pdf", "sectionLabel": "Final decision quality" }
+  },
+  {
+    "id": "c001",
+    "domain": "career_path",
+    "principle": "Set minimum acceptable compensation as a hard constraint first.",
+    "whenToApply": "User compares job offers with salary differences.",
+    "questionTemplates": [
+      "What is your non-negotiable minimum monthly salary?",
+      "Does each option meet this salary floor?"
+    ],
+    "criteriaSeeds": ["salary adequacy", "financial security"],
+    "biasSignals": ["wishful compromise"],
+    "constraintPatterns": ["minimum salary", "salary floor", "cannot take pay cut"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Career constraints" }
+  },
+  {
+    "id": "c002",
+    "domain": "career_path",
+    "principle": "Evaluate growth and learning as separate dimensions from brand prestige.",
+    "whenToApply": "Well-known company competes with learning-rich role.",
+    "questionTemplates": [
+      "Which option provides stronger skill growth in 12 months?",
+      "Are you weighting brand prestige more than role development?"
+    ],
+    "criteriaSeeds": ["learning curve", "career capital", "prestige-adjusted fit"],
+    "biasSignals": ["prestige bias"],
+    "constraintPatterns": ["growth", "learning", "brand"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Career progression factors" }
+  },
+  {
+    "id": "c003",
+    "domain": "career_path",
+    "principle": "Assess role fit against long-term trajectory, not just immediate compensation.",
+    "whenToApply": "Higher salary may reduce long-term fit.",
+    "questionTemplates": [
+      "Which role best supports your 3-year trajectory?",
+      "Would you trade some salary for higher trajectory fit?"
+    ],
+    "criteriaSeeds": ["trajectory alignment", "future optionality"],
+    "biasSignals": ["short-term gain bias"],
+    "constraintPatterns": ["3-year", "career path", "trajectory"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Career path planning" }
+  },
+  {
+    "id": "c004",
+    "domain": "career_path",
+    "principle": "Include work-life load and sustainability in offer comparisons.",
+    "whenToApply": "Role intensity differs significantly across options.",
+    "questionTemplates": [
+      "Which option is sustainable for your current life constraints?",
+      "How many high-stress weeks per month are acceptable?"
+    ],
+    "criteriaSeeds": ["work-life sustainability", "burnout risk"],
+    "biasSignals": ["overcommitment bias"],
+    "constraintPatterns": ["hours", "work-life", "burnout"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Career wellbeing" }
+  },
+  {
+    "id": "c005",
+    "domain": "career_path",
+    "principle": "Model downside if the chosen role under-delivers after 6 months.",
+    "whenToApply": "User is hesitant and seeks reassurance.",
+    "questionTemplates": [
+      "What is your realistic downside scenario for this choice?",
+      "How quickly could you recover if this role disappoints?"
+    ],
+    "criteriaSeeds": ["downside recoverability", "career resilience"],
+    "biasSignals": ["fear amplification"],
+    "constraintPatterns": ["worst case", "recover", "fallback"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Career risk management" }
+  },
+  {
+    "id": "c006",
+    "domain": "career_path",
+    "principle": "Treat manager quality as a major predictor of growth outcomes.",
+    "whenToApply": "Offers differ in manager support or mentorship quality.",
+    "questionTemplates": [
+      "Which manager offers stronger mentorship quality?",
+      "Is your growth dependent on this manager relationship?"
+    ],
+    "criteriaSeeds": ["manager quality", "mentorship access"],
+    "biasSignals": ["title bias"],
+    "constraintPatterns": ["manager", "mentor", "leadership support"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Career success predictors" }
+  },
+  {
+    "id": "c007",
+    "domain": "career_path",
+    "principle": "Evaluate role scope and decision authority as growth multipliers.",
+    "whenToApply": "Two roles have similar pay but different ownership scope.",
+    "questionTemplates": [
+      "Which option gives clearer ownership and decision authority?",
+      "Which role provides broader scope for advancement?"
+    ],
+    "criteriaSeeds": ["role scope", "decision authority"],
+    "biasSignals": ["title substitution"],
+    "constraintPatterns": ["ownership", "scope", "authority"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Role design and growth" }
+  },
+  {
+    "id": "c008",
+    "domain": "career_path",
+    "principle": "Consider commute and flexibility as sustained productivity factors.",
+    "whenToApply": "Options differ in remote/hybrid/on-site setup.",
+    "questionTemplates": [
+      "Is remote flexibility a non-negotiable for you?",
+      "What commute burden is acceptable weekly?"
+    ],
+    "criteriaSeeds": ["flexibility", "commute burden"],
+    "biasSignals": ["adaptation bias"],
+    "constraintPatterns": ["remote", "hybrid", "on-site", "commute"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Work arrangement impact" }
+  },
+  {
+    "id": "c009",
+    "domain": "career_path",
+    "principle": "Differentiate guaranteed compensation from uncertain upside.",
+    "whenToApply": "Offer includes bonus/equity vs fixed salary.",
+    "questionTemplates": [
+      "What percentage of compensation is guaranteed?",
+      "How much uncertainty in compensation can you tolerate?"
+    ],
+    "criteriaSeeds": ["income certainty", "upside quality"],
+    "biasSignals": ["upside optimism"],
+    "constraintPatterns": ["bonus", "equity", "variable pay"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Compensation structure" }
+  },
+  {
+    "id": "c010",
+    "domain": "career_path",
+    "principle": "Use values alignment as a criterion when options are close.",
+    "whenToApply": "Quantitative scores are near-tied.",
+    "questionTemplates": [
+      "Which option best aligns with your top two values?",
+      "Would this choice still feel right after one year?"
+    ],
+    "criteriaSeeds": ["values alignment", "identity fit"],
+    "biasSignals": ["external validation bias"],
+    "constraintPatterns": ["values", "meaning", "purpose"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Values and career decisions" }
+  },
+  {
+    "id": "c011",
+    "domain": "career_path",
+    "principle": "Highlight sunk-cost bias when user overweights current role familiarity.",
+    "whenToApply": "User hesitates due invested time in current job.",
+    "questionTemplates": [
+      "Are you staying mainly because of past investment?",
+      "Would you choose the current role again today?"
+    ],
+    "criteriaSeeds": ["forward-looking value", "switch justification"],
+    "biasSignals": ["sunk cost bias"],
+    "constraintPatterns": ["already invested", "years in role"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Decision bias in career moves" }
+  },
+  {
+    "id": "c012",
+    "domain": "career_path",
+    "principle": "Run a reversibility check before rejecting a high-upside move.",
+    "whenToApply": "User fears downside of switching roles.",
+    "questionTemplates": [
+      "How reversible is this move within 12 months?",
+      "Can you return to a similar baseline role if needed?"
+    ],
+    "criteriaSeeds": ["reversibility", "fallback access"],
+    "biasSignals": ["loss aversion"],
+    "constraintPatterns": ["reversible", "fallback", "return path"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Career mobility" }
+  },
+  {
+    "id": "c013",
+    "domain": "career_path",
+    "principle": "Account for network and mentorship access in long-term outcomes.",
+    "whenToApply": "Options differ in exposure to senior talent and networks.",
+    "questionTemplates": [
+      "Which option expands your high-value network faster?",
+      "Where is mentorship access stronger and more reliable?"
+    ],
+    "criteriaSeeds": ["network leverage", "mentorship depth"],
+    "biasSignals": ["salary-only bias"],
+    "constraintPatterns": ["network", "mentorship", "exposure"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Career capital" }
+  },
+  {
+    "id": "c014",
+    "domain": "career_path",
+    "principle": "Treat personal context constraints as first-order career factors.",
+    "whenToApply": "Family, health, or location obligations affect feasibility.",
+    "questionTemplates": [
+      "Does this option conflict with your current life obligations?",
+      "Which personal constraint is strictly non-negotiable now?"
+    ],
+    "criteriaSeeds": ["life fit", "feasibility"],
+    "biasSignals": ["constraint suppression"],
+    "constraintPatterns": ["family", "health", "location", "obligations"],
+    "source": { "fileName": "890218355-MGT210-12-05-TAFSIR.pdf", "sectionLabel": "Personal constraints and choices" }
+  },
+  {
+    "id": "c015",
+    "domain": "career_path",
+    "principle": "When margin is thin, define one validation experiment before final commitment.",
+    "whenToApply": "Top options are close and confidence is medium/low.",
+    "questionTemplates": [
+      "What one check would reduce uncertainty most this week?",
+      "Can you run one targeted validation before deciding?"
+    ],
+    "criteriaSeeds": ["validation plan", "decision confidence"],
+    "biasSignals": ["forced certainty"],
+    "constraintPatterns": ["thin margin", "uncertain", "validate"],
+    "source": { "fileName": "439322542-Career-Decision-Making-Research-1.pdf", "sectionLabel": "Decision confidence calibration" }
+  }
+]

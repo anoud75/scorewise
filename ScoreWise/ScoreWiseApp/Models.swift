@@ -242,10 +242,50 @@ struct SurveyAnswer: Codable, Hashable {
     var value: String
 }
 
+enum EvidenceCitationUsage: String, Codable, Hashable, CaseIterable, Identifiable {
+    case question
+    case criterion
+    case risk
+    case bias
+    case recommendation
+
+    var id: String { rawValue }
+}
+
+struct EvidenceCitation: Codable, Hashable, Identifiable {
+    var id: String = UUID().uuidString
+    var cardId: String
+    var sourceLabel: String
+    var usedFor: EvidenceCitationUsage
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case cardId
+        case sourceLabel
+        case usedFor
+    }
+
+    init(id: String = UUID().uuidString, cardId: String, sourceLabel: String, usedFor: EvidenceCitationUsage) {
+        self.id = id
+        self.cardId = cardId
+        self.sourceLabel = sourceLabel
+        self.usedFor = usedFor
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        cardId = try container.decodeIfPresent(String.self, forKey: .cardId) ?? ""
+        sourceLabel = try container.decodeIfPresent(String.self, forKey: .sourceLabel) ?? ""
+        usedFor = try container.decodeIfPresent(EvidenceCitationUsage.self, forKey: .usedFor) ?? .recommendation
+    }
+}
+
 struct ClarifyingQuestionAnswer: Codable, Hashable, Identifiable {
     var id: String = UUID().uuidString
     var question: String
     var answer: String
+    var citations: [EvidenceCitation]? = nil
 }
 
 enum DecisionOptionType: String, Codable, Hashable, CaseIterable, Identifiable {
@@ -375,6 +415,32 @@ struct DecisionChatOption: Codable, Hashable, Identifiable {
     var id: String = UUID().uuidString
     var index: Int
     var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case index
+        case text
+    }
+
+    init(id: String = UUID().uuidString, index: Int, text: String) {
+        self.id = id
+        self.index = index
+        self.text = text
+    }
+
+    init(from decoder: Decoder) throws {
+        if let textValue = try? decoder.singleValueContainer().decode(String.self) {
+            id = UUID().uuidString
+            index = 0
+            text = textValue
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        index = try container.decodeIfPresent(Int.self, forKey: .index) ?? 0
+        text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+    }
 }
 
 struct ChatMessageCTA: Codable, Hashable {
@@ -393,6 +459,61 @@ struct DecisionChatMessage: Codable, Hashable, Identifiable {
     var framework: DecisionFramework?
     var createdAt: Date
     var isTypingPlaceholder: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case role
+        case content
+        case options
+        case allowSkip
+        case allowsFreeformReply
+        case cta
+        case framework
+        case createdAt
+        case isTypingPlaceholder
+    }
+
+    init(
+        id: String = UUID().uuidString,
+        role: MessageRole,
+        content: String,
+        options: [DecisionChatOption],
+        allowSkip: Bool,
+        allowsFreeformReply: Bool,
+        cta: ChatMessageCTA?,
+        framework: DecisionFramework?,
+        createdAt: Date,
+        isTypingPlaceholder: Bool
+    ) {
+        self.id = id
+        self.role = role
+        self.content = content
+        self.options = options
+        self.allowSkip = allowSkip
+        self.allowsFreeformReply = allowsFreeformReply
+        self.cta = cta
+        self.framework = framework
+        self.createdAt = createdAt
+        self.isTypingPlaceholder = isTypingPlaceholder
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        role = try container.decodeIfPresent(MessageRole.self, forKey: .role) ?? .assistant
+        content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
+        let decodedOptions = try container.decodeIfPresent([DecisionChatOption].self, forKey: .options) ?? []
+        options = decodedOptions.enumerated().map { index, option in
+            let resolvedIndex = option.index > 0 ? option.index : index + 1
+            return DecisionChatOption(id: option.id, index: resolvedIndex, text: option.text)
+        }
+        allowSkip = try container.decodeIfPresent(Bool.self, forKey: .allowSkip) ?? false
+        allowsFreeformReply = try container.decodeIfPresent(Bool.self, forKey: .allowsFreeformReply) ?? false
+        cta = try container.decodeIfPresent(ChatMessageCTA.self, forKey: .cta)
+        framework = try container.decodeIfPresent(DecisionFramework.self, forKey: .framework)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
+        isTypingPlaceholder = try container.decodeIfPresent(Bool.self, forKey: .isTypingPlaceholder) ?? false
+    }
 }
 
 struct DecisionMatrixSetup: Codable, Hashable {
@@ -565,6 +686,7 @@ struct InsightReportDraft: Hashable {
     var riskFlags: [String]
     var overlookedStrategicPoints: [String]
     var sensitivityFindings: [String]
+    var citations: [EvidenceCitation] = []
 }
 
 @Model

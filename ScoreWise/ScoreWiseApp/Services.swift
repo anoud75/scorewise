@@ -50,11 +50,44 @@ struct AuthSession: Equatable {
 struct AISuggestedInputs {
     var criteria: [CriterionDraft]
     var draftScores: [ScoreDraft]
+    var citations: [EvidenceCitation] = []
 }
 
 struct AIChatResponse: Codable {
     var content: String
     var recommendedActions: [String]
+    var citations: [EvidenceCitation]
+
+    enum CodingKeys: String, CodingKey {
+        case content
+        case recommendedActions
+        case citations
+    }
+
+    init(content: String, recommendedActions: [String], citations: [EvidenceCitation] = []) {
+        self.content = content
+        self.recommendedActions = recommendedActions
+        self.citations = citations
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
+        recommendedActions = try container.decodeIfPresent([String].self, forKey: .recommendedActions) ?? []
+        citations = try container.decodeIfPresent([EvidenceCitation].self, forKey: .citations) ?? []
+    }
+}
+
+private func parseEvidenceCitations(_ raw: Any) -> [EvidenceCitation] {
+    guard let array = raw as? [[String: Any]] else { return [] }
+    return array.compactMap { item in
+        let cardID = (item["cardId"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceLabel = (item["sourceLabel"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let usageRaw = (item["usedFor"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cardID.isEmpty, !sourceLabel.isEmpty else { return nil }
+        let usedFor = EvidenceCitationUsage(rawValue: usageRaw) ?? .recommendation
+        return EvidenceCitation(cardId: cardID, sourceLabel: sourceLabel, usedFor: usedFor)
+    }
 }
 
 struct AIUserProfile: Codable, Hashable {
@@ -81,6 +114,9 @@ protocol AIservicing {
     func generateClarifyingQuestions(for draft: RankingDraft, userProfile: AIUserProfile?) async throws -> [ClarifyingQuestionAnswer]
     func suggestDecisionOptions(for draft: RankingDraft, userProfile: AIUserProfile?) async throws -> [DecisionOptionSnapshot]
     func generateBiasChallenges(for draft: RankingDraft, preferredOption: String, userProfile: AIUserProfile?) async throws -> [BiasChallengeResponse]
+    func startDecisionConversation(projectID: String, contextNarrative: String, usageContext: UsageContext, userProfile: AIUserProfile?) async throws -> DecisionConversationResponse
+    func continueDecisionConversation(projectID: String, transcript: [DecisionChatMessage], latestUserResponse: String, selectedOptionIndex: Int?, draft: RankingDraft, userProfile: AIUserProfile?) async throws -> DecisionConversationResponse
+    func finalizeConversationForMatrix(projectID: String, transcript: [DecisionChatMessage], draft: RankingDraft, userProfile: AIUserProfile?) async throws -> DecisionMatrixSetup
     func decisionChat(projectID: String, phase: String, message: String, draft: RankingDraft?, userProfile: AIUserProfile?) async throws -> AIChatResponse
     func generateInsights(draft: RankingDraft, result: RankingResult, userProfile: AIUserProfile?) async throws -> InsightReportDraft
 }
@@ -737,6 +773,85 @@ struct LocalMockAIService: AIservicing {
         LocalDecisionIntelligence.biasChallenges(for: draft, preferredOption: preferredOption, userProfile: userProfile)
     }
 
+    func startDecisionConversation(projectID: String, contextNarrative: String, usageContext: UsageContext, userProfile: AIUserProfile?) async throws -> DecisionConversationResponse {
+        let brief = DecisionEngine.shared.buildDecisionBrief(
+            draft: draftForConversation(projectID: projectID, contextNarrative: contextNarrative, usageContext: usageContext),
+            extractedEvidence: [],
+            userProfile: userProfile
+        )
+        let optionTexts = brief.detectedOptions
+            .map(\.label)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .prefix(4)
+        let options = Array(optionTexts.enumerated().map { index, text in
+            DecisionChatOption(index: index + 1, text: text)
+        })
+
+        return DecisionConversationResponse(
+            message: DecisionChatMessage(
+                role: .assistant,
+                content: "Let’s clarify what matters most before scoring. Which option best matches your current direction?",
+                options: options,
+                allowSkip: true,
+                allowsFreeformReply: true,
+                cta: nil,
+                framework: .valuesAlignment,
+                createdAt: .now,
+                isTypingPlaceholder: false
+            ),
+            conversationState: DecisionConversationState(phase: .collecting, frameworksUsed: [.valuesAlignment])
+        )
+    }
+
+    func continueDecisionConversation(projectID: String, transcript: [DecisionChatMessage], latestUserResponse: String, selectedOptionIndex: Int?, draft: RankingDraft, userProfile: AIUserProfile?) async throws -> DecisionConversationResponse {
+        let used = transcript.compactMap(\.framework)
+        if used.count >= 3 {
+            return DecisionConversationResponse(
+                message: DecisionChatMessage(
+                    role: .assistant,
+                    content: "I have enough context to set up your weighted matrix.",
+                    options: [],
+                    allowSkip: false,
+                    allowsFreeformReply: false,
+                    cta: ChatMessageCTA(title: "Set Up Your Options", action: .setupOptions),
+                    framework: nil,
+                    createdAt: .now,
+                    isTypingPlaceholder: false
+                ),
+                conversationState: DecisionConversationState(phase: .transitionReady, frameworksUsed: Array(used.prefix(4)))
+            )
+        }
+
+        let frameworks: [DecisionFramework] = [.riskAssessment, .opportunityCost, .reversibility]
+        let framework = frameworks[min(used.count, frameworks.count - 1)]
+        let questions = LocalDecisionIntelligence.clarifyingQuestions(for: draft, userProfile: userProfile).map(\.question)
+        let content = questions.dropFirst(used.count).first ?? "What one missing fact would most change your decision?"
+
+        return DecisionConversationResponse(
+            message: DecisionChatMessage(
+                role: .assistant,
+                content: content,
+                options: [],
+                allowSkip: true,
+                allowsFreeformReply: true,
+                cta: nil,
+                framework: framework,
+                createdAt: .now,
+                isTypingPlaceholder: false
+            ),
+            conversationState: DecisionConversationState(phase: .collecting, frameworksUsed: Array((used + [framework]).prefix(4)))
+        )
+    }
+
+    func finalizeConversationForMatrix(projectID: String, transcript: [DecisionChatMessage], draft: RankingDraft, userProfile: AIUserProfile?) async throws -> DecisionMatrixSetup {
+        let brief = DecisionEngine.shared.buildDecisionBrief(draft: draft, extractedEvidence: [], userProfile: userProfile)
+        return DecisionMatrixSetup(
+            decisionBrief: brief,
+            suggestedOptions: brief.detectedOptions,
+            suggestedCriteria: brief.suggestedCriteria
+        )
+    }
+
     func decisionChat(projectID: String, phase: String, message: String, draft: RankingDraft?, userProfile: AIUserProfile?) async throws -> AIChatResponse {
         DecisionEngine.shared.chatResponse(
             projectID: projectID,
@@ -749,6 +864,66 @@ struct LocalMockAIService: AIservicing {
 
     func generateInsights(draft: RankingDraft, result: RankingResult, userProfile: AIUserProfile?) async throws -> InsightReportDraft {
         DecisionEngine.shared.buildInsightReport(draft: draft, result: result, userProfile: userProfile)
+    }
+
+    private func draftForConversation(projectID: String, contextNarrative: String, usageContext: UsageContext) -> RankingDraft {
+        var draft = RankingDraft.empty
+        draft.id = projectID
+        draft.contextNarrative = contextNarrative
+        draft.usageContext = usageContext
+        return draft
+    }
+}
+
+struct UnavailableAIService: AIservicing {
+    private let reason: String
+
+    init(reason: String) {
+        self.reason = reason
+    }
+
+    func generateDecisionBrief(for draft: RankingDraft, extractedEvidence: [String], userProfile: AIUserProfile?) async throws -> DecisionBrief {
+        throw unavailableError()
+    }
+
+    func suggestRankingInputs(for draft: RankingDraft, context: UsageContext, extractedEvidence: [String], userProfile: AIUserProfile?) async throws -> AISuggestedInputs {
+        throw unavailableError()
+    }
+
+    func generateClarifyingQuestions(for draft: RankingDraft, userProfile: AIUserProfile?) async throws -> [ClarifyingQuestionAnswer] {
+        throw unavailableError()
+    }
+
+    func suggestDecisionOptions(for draft: RankingDraft, userProfile: AIUserProfile?) async throws -> [DecisionOptionSnapshot] {
+        throw unavailableError()
+    }
+
+    func generateBiasChallenges(for draft: RankingDraft, preferredOption: String, userProfile: AIUserProfile?) async throws -> [BiasChallengeResponse] {
+        throw unavailableError()
+    }
+
+    func startDecisionConversation(projectID: String, contextNarrative: String, usageContext: UsageContext, userProfile: AIUserProfile?) async throws -> DecisionConversationResponse {
+        throw unavailableError()
+    }
+
+    func continueDecisionConversation(projectID: String, transcript: [DecisionChatMessage], latestUserResponse: String, selectedOptionIndex: Int?, draft: RankingDraft, userProfile: AIUserProfile?) async throws -> DecisionConversationResponse {
+        throw unavailableError()
+    }
+
+    func finalizeConversationForMatrix(projectID: String, transcript: [DecisionChatMessage], draft: RankingDraft, userProfile: AIUserProfile?) async throws -> DecisionMatrixSetup {
+        throw unavailableError()
+    }
+
+    func decisionChat(projectID: String, phase: String, message: String, draft: RankingDraft?, userProfile: AIUserProfile?) async throws -> AIChatResponse {
+        throw unavailableError()
+    }
+
+    func generateInsights(draft: RankingDraft, result: RankingResult, userProfile: AIUserProfile?) async throws -> InsightReportDraft {
+        throw unavailableError()
+    }
+
+    private func unavailableError() -> Error {
+        ScoreWiseServiceError.featureUnavailable(reason)
     }
 }
 
@@ -2011,6 +2186,35 @@ final class AnthropicAIService: AIservicing {
         }
     }
 
+    func startDecisionConversation(projectID: String, contextNarrative: String, usageContext: UsageContext, userProfile: AIUserProfile?) async throws -> DecisionConversationResponse {
+        try await fallback.startDecisionConversation(
+            projectID: projectID,
+            contextNarrative: contextNarrative,
+            usageContext: usageContext,
+            userProfile: userProfile
+        )
+    }
+
+    func continueDecisionConversation(projectID: String, transcript: [DecisionChatMessage], latestUserResponse: String, selectedOptionIndex: Int?, draft: RankingDraft, userProfile: AIUserProfile?) async throws -> DecisionConversationResponse {
+        try await fallback.continueDecisionConversation(
+            projectID: projectID,
+            transcript: transcript,
+            latestUserResponse: latestUserResponse,
+            selectedOptionIndex: selectedOptionIndex,
+            draft: draft,
+            userProfile: userProfile
+        )
+    }
+
+    func finalizeConversationForMatrix(projectID: String, transcript: [DecisionChatMessage], draft: RankingDraft, userProfile: AIUserProfile?) async throws -> DecisionMatrixSetup {
+        try await fallback.finalizeConversationForMatrix(
+            projectID: projectID,
+            transcript: transcript,
+            draft: draft,
+            userProfile: userProfile
+        )
+    }
+
     func decisionChat(projectID: String, phase: String, message: String, draft: RankingDraft?, userProfile: AIUserProfile?) async throws -> AIChatResponse {
         do {
             let userMessage = """
@@ -2127,7 +2331,11 @@ final class AnthropicAIService: AIservicing {
                 evidenceSnippet: item["evidenceSnippet"] as? String ?? ""
             )
         }
-        return AISuggestedInputs(criteria: criteria, draftScores: scores)
+        return AISuggestedInputs(
+            criteria: criteria,
+            draftScores: scores,
+            citations: parseEvidenceCitations(payload["citations"] as Any)
+        )
     }
 
     private func splitLinesOrArray(_ value: OneOrManyStrings) -> [String] {
@@ -2231,14 +2439,45 @@ private enum OneOrManyStrings: Decodable {
 final class FirebaseFunctionsAIService: AIservicing {
     private let functions: Functions
     private let fallback: AIservicing
+    private let allowLocalFallback: Bool
 
-    init(functions: Functions? = nil, fallback: AIservicing = LocalMockAIService()) {
+    init(
+        functions: Functions? = nil,
+        fallback: AIservicing = LocalMockAIService(),
+        allowLocalFallback: Bool = ProcessInfo.processInfo.environment["SCOREWISE_ENABLE_LOCAL_AI_FALLBACK"] == "1"
+    ) {
         self.functions = functions ?? Functions.functions()
         self.fallback = fallback
+        self.allowLocalFallback = allowLocalFallback
     }
 
     func generateDecisionBrief(for draft: RankingDraft, extractedEvidence: [String], userProfile: AIUserProfile?) async throws -> DecisionBrief {
-        try await fallback.generateDecisionBrief(for: draft, extractedEvidence: extractedEvidence, userProfile: userProfile)
+        do {
+            var payload: [String: Any] = [
+                "projectId": draft.id,
+                "transcript": [],
+                "draft": [
+                    "title": draft.title,
+                    "contextNarrative": draft.contextNarrative,
+                    "usageContext": draft.usageContext.rawValue,
+                    "vendors": draft.vendors.map { ["id": $0.id, "name": $0.name, "notes": $0.notes] },
+                    "clarifyingQuestions": draft.clarifyingQuestions.map { ["question": $0.question, "answer": $0.answer] },
+                    "extractedText": extractedEvidence
+                ]
+            ]
+            if let userProfile {
+                payload["userProfile"] = Self.userProfileDictionary(userProfile)
+            }
+            let result = try await functions.httpsCallable("finalizeConversationForMatrix").call(payload)
+            return try Self.parseDecisionMatrixSetup(result.data, fallbackCategory: draft.category).decisionBrief
+        } catch {
+            if allowLocalFallback {
+                logAIFallback(functionName: "generateDecisionBrief", projectID: draft.id, error: error)
+                return try await fallback.generateDecisionBrief(for: draft, extractedEvidence: extractedEvidence, userProfile: userProfile)
+            }
+            logAICloudError(functionName: "generateDecisionBrief", projectID: draft.id, error: error)
+            throw ScoreWiseServiceError.featureUnavailable("AI decision brief generation is unavailable right now. Please retry.")
+        }
     }
 
     func suggestRankingInputs(for draft: RankingDraft, context: UsageContext, extractedEvidence: [String], userProfile: AIUserProfile?) async throws -> AISuggestedInputs {
@@ -2256,8 +2495,12 @@ final class FirebaseFunctionsAIService: AIservicing {
             let result = try await functions.httpsCallable("suggestRankingInputs").call(payload)
             return parseSuggestedInputs(result.data, draft: draft)
         } catch {
-            logAIFallback(functionName: "suggestRankingInputs", projectID: draft.id, phase: context.rawValue, error: error)
-            return try await fallback.suggestRankingInputs(for: draft, context: context, extractedEvidence: extractedEvidence, userProfile: userProfile)
+            if allowLocalFallback {
+                logAIFallback(functionName: "suggestRankingInputs", projectID: draft.id, phase: context.rawValue, error: error)
+                return try await fallback.suggestRankingInputs(for: draft, context: context, extractedEvidence: extractedEvidence, userProfile: userProfile)
+            }
+            logAICloudError(functionName: "suggestRankingInputs", projectID: draft.id, phase: context.rawValue, error: error)
+            throw ScoreWiseServiceError.featureUnavailable("AI matrix suggestions are unavailable right now. Please retry.")
         }
     }
 
@@ -2273,8 +2516,12 @@ final class FirebaseFunctionsAIService: AIservicing {
             let result = try await functions.httpsCallable("generateClarifyingQuestions").call(payload)
             return Self.parseClarifyingQuestions(result.data)
         } catch {
-            logAIFallback(functionName: "generateClarifyingQuestions", projectID: draft.id, error: error)
-            return try await fallback.generateClarifyingQuestions(for: draft, userProfile: userProfile)
+            if allowLocalFallback {
+                logAIFallback(functionName: "generateClarifyingQuestions", projectID: draft.id, error: error)
+                return try await fallback.generateClarifyingQuestions(for: draft, userProfile: userProfile)
+            }
+            logAICloudError(functionName: "generateClarifyingQuestions", projectID: draft.id, error: error)
+            throw ScoreWiseServiceError.featureUnavailable("AI clarifying questions are unavailable right now. Please retry.")
         }
     }
 
@@ -2291,8 +2538,12 @@ final class FirebaseFunctionsAIService: AIservicing {
             let result = try await functions.httpsCallable("suggestDecisionOptions").call(payload)
             return Self.parseOptions(result.data)
         } catch {
-            logAIFallback(functionName: "suggestDecisionOptions", projectID: draft.id, error: error)
-            return try await fallback.suggestDecisionOptions(for: draft, userProfile: userProfile)
+            if allowLocalFallback {
+                logAIFallback(functionName: "suggestDecisionOptions", projectID: draft.id, error: error)
+                return try await fallback.suggestDecisionOptions(for: draft, userProfile: userProfile)
+            }
+            logAICloudError(functionName: "suggestDecisionOptions", projectID: draft.id, error: error)
+            throw ScoreWiseServiceError.featureUnavailable("AI option extraction is unavailable right now. Please retry.")
         }
     }
 
@@ -2310,8 +2561,110 @@ final class FirebaseFunctionsAIService: AIservicing {
             let result = try await functions.httpsCallable("generateBiasChallenges").call(payload)
             return Self.parseBiasChallenges(result.data)
         } catch {
-            logAIFallback(functionName: "generateBiasChallenges", projectID: draft.id, error: error)
-            return try await fallback.generateBiasChallenges(for: draft, preferredOption: preferredOption, userProfile: userProfile)
+            if allowLocalFallback {
+                logAIFallback(functionName: "generateBiasChallenges", projectID: draft.id, error: error)
+                return try await fallback.generateBiasChallenges(for: draft, preferredOption: preferredOption, userProfile: userProfile)
+            }
+            logAICloudError(functionName: "generateBiasChallenges", projectID: draft.id, error: error)
+            throw ScoreWiseServiceError.featureUnavailable("AI challenge generation is unavailable right now. Please retry.")
+        }
+    }
+
+    func startDecisionConversation(projectID: String, contextNarrative: String, usageContext: UsageContext, userProfile: AIUserProfile?) async throws -> DecisionConversationResponse {
+        do {
+            var payload: [String: Any] = [
+                "projectId": projectID,
+                "contextNarrative": contextNarrative,
+                "usageContext": usageContext.rawValue
+            ]
+            if let userProfile {
+                payload["userProfile"] = Self.userProfileDictionary(userProfile)
+            }
+            let result = try await functions.httpsCallable("startDecisionConversation").call(payload)
+            return try Self.parseConversationResponse(result.data)
+        } catch {
+            if allowLocalFallback {
+                logAIFallback(functionName: "startDecisionConversation", projectID: projectID, error: error)
+                return try await fallback.startDecisionConversation(
+                    projectID: projectID,
+                    contextNarrative: contextNarrative,
+                    usageContext: usageContext,
+                    userProfile: userProfile
+                )
+            }
+            logAICloudError(functionName: "startDecisionConversation", projectID: projectID, error: error)
+            throw ScoreWiseServiceError.featureUnavailable("Could not start AI decision conversation. Please retry.")
+        }
+    }
+
+    func continueDecisionConversation(projectID: String, transcript: [DecisionChatMessage], latestUserResponse: String, selectedOptionIndex: Int?, draft: RankingDraft, userProfile: AIUserProfile?) async throws -> DecisionConversationResponse {
+        do {
+            var payload: [String: Any] = [
+                "projectId": projectID,
+                "transcript": Self.serializeTranscript(transcript),
+                "latestUserResponse": latestUserResponse,
+                "selectedOptionIndex": selectedOptionIndex as Any,
+                "draft": [
+                    "title": draft.title,
+                    "contextNarrative": draft.contextNarrative,
+                    "chatPhase": draft.chatPhase.rawValue,
+                    "frameworksUsed": draft.frameworksUsed.map(\.rawValue)
+                ]
+            ]
+            if let userProfile {
+                payload["userProfile"] = Self.userProfileDictionary(userProfile)
+            }
+            let result = try await functions.httpsCallable("continueDecisionConversation").call(payload)
+            return try Self.parseConversationResponse(result.data)
+        } catch {
+            if allowLocalFallback {
+                logAIFallback(functionName: "continueDecisionConversation", projectID: projectID, error: error)
+                return try await fallback.continueDecisionConversation(
+                    projectID: projectID,
+                    transcript: transcript,
+                    latestUserResponse: latestUserResponse,
+                    selectedOptionIndex: selectedOptionIndex,
+                    draft: draft,
+                    userProfile: userProfile
+                )
+            }
+            logAICloudError(functionName: "continueDecisionConversation", projectID: projectID, error: error)
+            throw ScoreWiseServiceError.featureUnavailable("Could not continue AI decision conversation. Please retry.")
+        }
+    }
+
+    func finalizeConversationForMatrix(projectID: String, transcript: [DecisionChatMessage], draft: RankingDraft, userProfile: AIUserProfile?) async throws -> DecisionMatrixSetup {
+        do {
+            var payload: [String: Any] = [
+                "projectId": projectID,
+                "transcript": Self.serializeTranscript(transcript),
+                "draft": [
+                    "title": draft.title,
+                    "contextNarrative": draft.contextNarrative,
+                    "usageContext": draft.usageContext.rawValue,
+                    "chatPhase": draft.chatPhase.rawValue,
+                    "frameworksUsed": draft.frameworksUsed.map(\.rawValue),
+                    "vendors": draft.vendors.map { ["id": $0.id, "name": $0.name, "notes": $0.notes] },
+                    "clarifyingQuestions": draft.clarifyingQuestions.map { ["question": $0.question, "answer": $0.answer] }
+                ]
+            ]
+            if let userProfile {
+                payload["userProfile"] = Self.userProfileDictionary(userProfile)
+            }
+            let result = try await functions.httpsCallable("finalizeConversationForMatrix").call(payload)
+            return try Self.parseDecisionMatrixSetup(result.data, fallbackCategory: draft.category)
+        } catch {
+            if allowLocalFallback {
+                logAIFallback(functionName: "finalizeConversationForMatrix", projectID: projectID, error: error)
+                return try await fallback.finalizeConversationForMatrix(
+                    projectID: projectID,
+                    transcript: transcript,
+                    draft: draft,
+                    userProfile: userProfile
+                )
+            }
+            logAICloudError(functionName: "finalizeConversationForMatrix", projectID: projectID, error: error)
+            throw ScoreWiseServiceError.featureUnavailable("Could not finalize matrix setup from AI conversation. Please retry.")
         }
     }
 
@@ -2333,8 +2686,13 @@ final class FirebaseFunctionsAIService: AIservicing {
             }
             let result = try await functions.httpsCallable("decisionChat").call(payload)
             guard let dictionary = result.data as? [String: Any] else {
-                logAIFallback(functionName: "decisionChat", projectID: projectID, phase: phase, error: ScoreWiseServiceError.featureUnavailable("Invalid callable payload shape"))
-                return try await fallback.decisionChat(projectID: projectID, phase: phase, message: message, draft: draft, userProfile: userProfile)
+                let shapeError = ScoreWiseServiceError.featureUnavailable("Invalid callable payload shape")
+                if allowLocalFallback {
+                    logAIFallback(functionName: "decisionChat", projectID: projectID, phase: phase, error: shapeError)
+                    return try await fallback.decisionChat(projectID: projectID, phase: phase, message: message, draft: draft, userProfile: userProfile)
+                }
+                logAICloudError(functionName: "decisionChat", projectID: projectID, phase: phase, error: shapeError)
+                throw ScoreWiseServiceError.featureUnavailable("AI analysis payload is invalid. Please retry.")
             }
             let content: String
             if let raw = dictionary["content"] as? String {
@@ -2356,10 +2714,15 @@ final class FirebaseFunctionsAIService: AIservicing {
                 content = "I need more context to provide a grounded recommendation."
             }
             let actions = dictionary["recommendedActions"] as? [String] ?? []
-            return AIChatResponse(content: content, recommendedActions: actions)
+            let citations = parseEvidenceCitations(dictionary["citations"] as Any)
+            return AIChatResponse(content: content, recommendedActions: actions, citations: citations)
         } catch {
-            logAIFallback(functionName: "decisionChat", projectID: projectID, phase: phase, error: error)
-            return try await fallback.decisionChat(projectID: projectID, phase: phase, message: message, draft: draft, userProfile: userProfile)
+            if allowLocalFallback {
+                logAIFallback(functionName: "decisionChat", projectID: projectID, phase: phase, error: error)
+                return try await fallback.decisionChat(projectID: projectID, phase: phase, message: message, draft: draft, userProfile: userProfile)
+            }
+            logAICloudError(functionName: "decisionChat", projectID: projectID, phase: phase, error: error)
+            throw ScoreWiseServiceError.featureUnavailable("AI analysis is unavailable right now. Please retry.")
         }
     }
 
@@ -2397,25 +2760,40 @@ final class FirebaseFunctionsAIService: AIservicing {
             }
             let raw = try await functions.httpsCallable("generateInsights").call(payload)
             guard let dictionary = raw.data as? [String: Any] else {
-                logAIFallback(functionName: "generateInsights", projectID: draft.id, error: ScoreWiseServiceError.featureUnavailable("Invalid callable payload shape"))
-                return try await fallback.generateInsights(draft: draft, result: result, userProfile: userProfile)
+                let shapeError = ScoreWiseServiceError.featureUnavailable("Invalid callable payload shape")
+                if allowLocalFallback {
+                    logAIFallback(functionName: "generateInsights", projectID: draft.id, error: shapeError)
+                    return try await fallback.generateInsights(draft: draft, result: result, userProfile: userProfile)
+                }
+                logAICloudError(functionName: "generateInsights", projectID: draft.id, error: shapeError)
+                throw ScoreWiseServiceError.featureUnavailable("AI insights payload is invalid. Please retry.")
             }
             return InsightReportDraft(
                 summary: dictionary["summary"] as? String ?? "",
                 winnerReasoning: dictionary["winnerReasoning"] as? String ?? "",
                 riskFlags: dictionary["riskFlags"] as? [String] ?? [],
                 overlookedStrategicPoints: dictionary["overlookedStrategicPoints"] as? [String] ?? [],
-                sensitivityFindings: dictionary["sensitivityFindings"] as? [String] ?? []
+                sensitivityFindings: dictionary["sensitivityFindings"] as? [String] ?? [],
+                citations: parseEvidenceCitations(dictionary["citations"] as Any)
             )
         } catch {
-            logAIFallback(functionName: "generateInsights", projectID: draft.id, error: error)
-            return try await fallback.generateInsights(draft: draft, result: result, userProfile: userProfile)
+            if allowLocalFallback {
+                logAIFallback(functionName: "generateInsights", projectID: draft.id, error: error)
+                return try await fallback.generateInsights(draft: draft, result: result, userProfile: userProfile)
+            }
+            logAICloudError(functionName: "generateInsights", projectID: draft.id, error: error)
+            throw ScoreWiseServiceError.featureUnavailable("AI insight generation is unavailable right now. Please retry.")
         }
     }
 
     private func logAIFallback(functionName: String, projectID: String, phase: String? = nil, error: Error) {
         let phaseTag = phase?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? ", phase=\(phase ?? "")" : ""
         print("⚠️ AI_FALLBACK function=\(functionName), projectId=\(projectID)\(phaseTag), error=\(error.localizedDescription)")
+    }
+
+    private func logAICloudError(functionName: String, projectID: String, phase: String? = nil, error: Error) {
+        let phaseTag = phase?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? ", phase=\(phase ?? "")" : ""
+        print("❌ AI_CLOUD_ERROR function=\(functionName), projectId=\(projectID)\(phaseTag), error=\(error.localizedDescription)")
     }
 
     private static func userProfileDictionary(_ profile: AIUserProfile) -> [String: Any] {
@@ -2429,7 +2807,147 @@ final class FirebaseFunctionsAIService: AIservicing {
         ]
     }
 
+    private static func serializeTranscript(_ transcript: [DecisionChatMessage]) -> [[String: Any]] {
+        transcript.map { message in
+            [
+                "id": message.id,
+                "role": message.role.rawValue,
+                "content": message.content,
+                "options": message.options.map(\.text),
+                "allowSkip": message.allowSkip,
+                "allowsFreeformReply": message.allowsFreeformReply,
+                "framework": message.framework?.rawValue as Any,
+                "createdAt": ISO8601DateFormatter().string(from: message.createdAt)
+            ]
+        }
+    }
+
+    private static func parseConversationResponse(_ raw: Any) throws -> DecisionConversationResponse {
+        guard let dictionary = raw as? [String: Any],
+              let messagePayload = dictionary["message"] as? [String: Any],
+              let statePayload = dictionary["conversationState"] as? [String: Any] else {
+            throw ScoreWiseServiceError.featureUnavailable("Invalid conversation response payload.")
+        }
+
+        let content = (messagePayload["content"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if content.isEmpty {
+            throw ScoreWiseServiceError.featureUnavailable("Conversation response was empty.")
+        }
+        let rawOptions = messagePayload["options"] as? [Any] ?? []
+        let options: [DecisionChatOption] = rawOptions.enumerated().compactMap { index, item in
+            if let text = item as? String {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return DecisionChatOption(index: index + 1, text: trimmed)
+            }
+            if let option = item as? [String: Any] {
+                let text = (option["text"] as? String ?? option["label"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                let resolvedIndex = option["index"] as? Int ?? (index + 1)
+                return DecisionChatOption(
+                    id: option["id"] as? String ?? UUID().uuidString,
+                    index: resolvedIndex,
+                    text: text
+                )
+            }
+            return nil
+        }
+        let cta: ChatMessageCTA?
+        if let ctaPayload = messagePayload["cta"] as? [String: Any],
+           let title = (ctaPayload["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            let actionRaw = ctaPayload["action"] as? String ?? ChatCTAAction.setupOptions.rawValue
+            cta = ChatMessageCTA(title: title, action: ChatCTAAction(rawValue: actionRaw) ?? .setupOptions)
+        } else {
+            cta = nil
+        }
+
+        let framework: DecisionFramework?
+        if let frameworkRaw = messagePayload["framework"] as? String {
+            framework = DecisionFramework(rawValue: frameworkRaw)
+        } else {
+            framework = nil
+        }
+
+        let message = DecisionChatMessage(
+            role: .assistant,
+            content: content,
+            options: options,
+            allowSkip: messagePayload["allowSkip"] as? Bool ?? false,
+            allowsFreeformReply: messagePayload["allowsFreeformReply"] as? Bool ?? false,
+            cta: cta,
+            framework: framework,
+            createdAt: .now,
+            isTypingPlaceholder: false
+        )
+
+        let phaseRaw = statePayload["phase"] as? String ?? ChatConversationPhase.collecting.rawValue
+        let phase = ChatConversationPhase(rawValue: phaseRaw) ?? .collecting
+        let frameworksUsed = ((statePayload["frameworksUsed"] as? [String]) ?? [])
+            .compactMap { DecisionFramework(rawValue: $0) }
+        let resolvedFrameworks: [DecisionFramework]
+        if frameworksUsed.isEmpty, let framework {
+            resolvedFrameworks = [framework]
+        } else {
+            resolvedFrameworks = frameworksUsed
+        }
+        let state = DecisionConversationState(phase: phase, frameworksUsed: resolvedFrameworks)
+
+        return DecisionConversationResponse(message: message, conversationState: state)
+    }
+
+    private static func parseDecisionMatrixSetup(_ raw: Any, fallbackCategory: DecisionCategory) throws -> DecisionMatrixSetup {
+        guard let dictionary = raw as? [String: Any] else {
+            throw ScoreWiseServiceError.featureUnavailable("Invalid matrix setup payload.")
+        }
+
+        let briefPayload = dictionary["decisionBrief"] as? [String: Any] ?? [:]
+        let briefOptions = parseOptions(briefPayload["detectedOptions"] as Any)
+        let suggestedOptions = parseOptions(dictionary["suggestedOptions"] as Any)
+        let briefCriteria = parseCriteria(briefPayload["suggestedCriteria"] as Any)
+        let suggestedCriteria = parseCriteria(dictionary["suggestedCriteria"] as Any)
+
+        let inferredCategory = DecisionCategory(rawValue: briefPayload["inferredCategory"] as? String ?? "") ?? fallbackCategory
+        let decisionBrief = DecisionBrief(
+            summary: (briefPayload["summary"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
+            inferredCategory: inferredCategory,
+            detectedOptions: briefOptions,
+            goals: parseStringArray(briefPayload["goals"] as Any),
+            constraints: parseStringArray(briefPayload["constraints"] as Any),
+            risks: parseStringArray(briefPayload["risks"] as Any),
+            tensions: parseStringArray(briefPayload["tensions"] as Any),
+            suggestedCriteria: briefCriteria.isEmpty ? suggestedCriteria : briefCriteria
+        )
+
+        return DecisionMatrixSetup(
+            decisionBrief: decisionBrief,
+            suggestedOptions: suggestedOptions.isEmpty ? briefOptions : suggestedOptions,
+            suggestedCriteria: suggestedCriteria.isEmpty ? decisionBrief.suggestedCriteria : suggestedCriteria
+        )
+    }
+
     private static func parseClarifyingQuestions(_ raw: Any) -> [ClarifyingQuestionAnswer] {
+        if let dictionary = raw as? [String: Any] {
+            let fallbackCitations = parseEvidenceCitations(dictionary["citations"] as Any)
+            let array = dictionary["questions"] as? [Any] ?? []
+            return array.compactMap {
+                if let text = $0 as? String {
+                    return ClarifyingQuestionAnswer(question: text, answer: "", citations: fallbackCitations)
+                }
+                if let dict = $0 as? [String: Any] {
+                    return ClarifyingQuestionAnswer(
+                        question: dict["question"] as? String ?? "",
+                        answer: dict["answer"] as? String ?? "",
+                        citations: {
+                            let local = parseEvidenceCitations(dict["citations"] as Any)
+                            return local.isEmpty ? fallbackCitations : local
+                        }()
+                    )
+                }
+                return nil
+            }
+        }
+
         guard let array = raw as? [Any] else { return [] }
         return array.compactMap {
             if let text = $0 as? String {
@@ -2446,6 +2964,21 @@ final class FirebaseFunctionsAIService: AIservicing {
     }
 
     private static func parseOptions(_ raw: Any) -> [DecisionOptionSnapshot] {
+        if let array = raw as? [String] {
+            return array.enumerated().compactMap { index, label in
+                let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                let lower = trimmed.lowercased()
+                guard !lower.hasPrefix("vendor ") && !lower.hasPrefix("option ") else { return nil }
+                return DecisionOptionSnapshot(
+                    id: "opt_\(index + 1)",
+                    label: trimmed,
+                    type: inferredOptionType(from: trimmed),
+                    description: nil,
+                    aiSuggested: true
+                )
+            }
+        }
         guard let array = raw as? [[String: Any]] else { return [] }
         return array.compactMap { item in
             let label = (item["label"] as? String ?? item["title"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2460,6 +2993,30 @@ final class FirebaseFunctionsAIService: AIservicing {
                 description: item["description"] as? String,
                 aiSuggested: item["aiSuggested"] as? Bool ?? true
             )
+        }
+    }
+
+    private static func parseCriteria(_ raw: Any) -> [CriterionDraft] {
+        guard let array = raw as? [[String: Any]] else { return [] }
+        return array.compactMap { item in
+            let name = (item["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            return CriterionDraft(
+                id: item["id"] as? String ?? UUID().uuidString,
+                name: name,
+                detail: (item["detail"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
+                category: (item["category"] as? String ?? "General").trimmingCharacters(in: .whitespacesAndNewlines),
+                weightPercent: item["weightPercent"] as? Double ?? 0
+            )
+        }
+    }
+
+    private static func parseStringArray(_ raw: Any) -> [String] {
+        guard let array = raw as? [Any] else { return [] }
+        return array.compactMap { item -> String? in
+            guard let text = item as? String else { return nil }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
         }
     }
 
@@ -2496,7 +3053,7 @@ final class FirebaseFunctionsAIService: AIservicing {
 
     private func parseSuggestedInputs(_ raw: Any, draft: RankingDraft) -> AISuggestedInputs {
         guard let dictionary = raw as? [String: Any] else {
-            return AISuggestedInputs(criteria: draft.criteria, draftScores: [])
+            return AISuggestedInputs(criteria: draft.criteria, draftScores: [], citations: [])
         }
         let criteriaArray = dictionary["criteria"] as? [[String: Any]] ?? []
         let criteria = criteriaArray.map { item in
@@ -2520,7 +3077,11 @@ final class FirebaseFunctionsAIService: AIservicing {
                 evidenceSnippet: item["evidenceSnippet"] as? String ?? ""
             )
         }
-        return AISuggestedInputs(criteria: criteria, draftScores: scores)
+        return AISuggestedInputs(
+            criteria: criteria,
+            draftScores: scores,
+            citations: parseEvidenceCitations(dictionary["citations"] as Any)
+        )
     }
 }
 #endif
@@ -3329,16 +3890,26 @@ struct AppServices {
         #endif
         let aiService: AIservicing = {
             let allowDirect = ProcessInfo.processInfo.environment["SCOREWISE_ALLOW_DIRECT_AI_DEBUG"] == "1"
+            let allowLocalFallback = ProcessInfo.processInfo.environment["SCOREWISE_ENABLE_LOCAL_AI_FALLBACK"] == "1"
             if allowDirect, let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !apiKey.isEmpty {
                 return AnthropicAIService(apiKey: apiKey)
             }
             #if canImport(FirebaseFunctions) && canImport(FirebaseCore)
             if firebaseConfigured {
-                return FirebaseFunctionsAIService(fallback: LocalMockAIService())
+                return FirebaseFunctionsAIService(
+                    fallback: LocalMockAIService(),
+                    allowLocalFallback: allowLocalFallback
+                )
             }
-            return LocalMockAIService()
+            if allowLocalFallback {
+                return LocalMockAIService()
+            }
+            return UnavailableAIService(reason: "Cloud AI is not configured. Check Firebase setup and retry.")
             #else
-            return LocalMockAIService()
+            if allowLocalFallback {
+                return LocalMockAIService()
+            }
+            return UnavailableAIService(reason: "Cloud AI is unavailable in this build configuration.")
             #endif
         }()
         let extractorService: FileExtractionServicing = {
