@@ -6,3 +6,5 @@ GoogleService-Info.plist
 CloudFunctions/node_modules/
 CloudFunctions/lib/
 .firebase/
+FirstSign.swiftpm/
+FirstSign.swiftpm.zip
