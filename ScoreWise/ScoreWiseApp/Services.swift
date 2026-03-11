@@ -4051,7 +4051,7 @@ struct LocalNotificationService: NotificationServicing {
     func cancelFollowUp(for projectID: String) async {
         #if canImport(UserNotifications)
         let center = UNUserNotificationCenter.current()
-        let pending = await center.pendingNotificationRequests()
+        let pending = await pendingNotificationRequests(from: center)
         let ids = pending.map(\.identifier).filter { $0.hasPrefix("followup.\(projectID).") }
         center.removePendingNotificationRequests(withIdentifiers: ids)
         #endif
@@ -4066,6 +4066,16 @@ struct LocalNotificationService: NotificationServicing {
     private func notificationIdentifier(projectID: String, checkpointID: String) -> String {
         "followup.\(projectID).\(checkpointID)"
     }
+
+    #if canImport(UserNotifications)
+    private func pendingNotificationRequests(from center: UNUserNotificationCenter) async -> [UNNotificationRequest] {
+        await withCheckedContinuation { continuation in
+            center.getPendingNotificationRequests { requests in
+                continuation.resume(returning: requests)
+            }
+        }
+    }
+    #endif
 }
 
 enum PromptEngineering {
