@@ -13,6 +13,7 @@ const geminiApiKey = defineSecret("GEMINI_API_KEY");
 const fastModel = process.env.GEMINI_MODEL_FAST ?? "gemini-2.5-flash-lite";
 const reasoningModel = process.env.GEMINI_MODEL_REASONING ?? "gemini-2.5-flash";
 const challengeQuestionMaxLength = 120;
+const biasChallengeQuestionMaxLength = 100;
 
 type DecisionOptionType = "candidate" | "offer" | "school" | "vendor" | "generic_choice";
 type DecisionOption = {
@@ -375,6 +376,449 @@ function detectConstraintSignals(cards: KnowledgeCard[], contextBlob: string): s
   return findings.slice(0, 6);
 }
 
+function unifiedContextBlob(unifiedContext: unknown): string {
+  if (typeof unifiedContext !== "object" || unifiedContext === null) {
+    return "";
+  }
+  const record = unifiedContext as Record<string, unknown>;
+  const sections: string[] = [];
+
+  const pushString = (value: unknown, label: string) => {
+    if (typeof value === "string") {
+      const normalized = normalizeWhitespace(value);
+      if (normalized) {
+        sections.push(`${label}: ${normalized}`);
+      }
+    }
+  };
+  const pushStringArray = (value: unknown, label: string) => {
+    if (!Array.isArray(value)) {
+      return;
+    }
+    const lines = value
+      .filter((item): item is string => typeof item === "string")
+      .map(normalizeWhitespace)
+      .filter(Boolean);
+    if (lines.length > 0) {
+      sections.push(`${label}: ${lines.join(" | ")}`);
+    }
+  };
+
+  pushString(record.decisionNarrative, "Narrative");
+  pushStringArray(record.conversationTranscript, "Transcript");
+  pushStringArray(record.attachmentEvidence, "AttachmentEvidence");
+  pushStringArray(record.attachmentsSummary, "Attachments");
+  pushStringArray(record.challengeResponsesSummary, "ChallengeResponses");
+
+  if (Array.isArray(record.options)) {
+    const options = (record.options as Array<Record<string, unknown>>)
+      .map((item) => normalizeWhitespace(typeof item.label === "string" ? item.label : ""))
+      .filter(Boolean);
+    if (options.length > 0) {
+      sections.push(`Options: ${options.join(" | ")}`);
+    }
+  }
+
+  if (Array.isArray(record.criteria)) {
+    const criteria = (record.criteria as Array<Record<string, unknown>>)
+      .map((item) => normalizeWhitespace(typeof item.name === "string" ? item.name : ""))
+      .filter(Boolean);
+    if (criteria.length > 0) {
+      sections.push(`Criteria: ${criteria.join(" | ")}`);
+    }
+  }
+
+  if (Array.isArray(record.constraints)) {
+    const constraints = (record.constraints as Array<Record<string, unknown>>)
+      .map((item) => normalizeWhitespace(typeof item.rule === "string" ? item.rule : ""))
+      .filter(Boolean);
+    if (constraints.length > 0) {
+      sections.push(`Constraints: ${constraints.join(" | ")}`);
+    }
+  }
+
+  return sections.join("\n");
+}
+
+type BiasChallengeTypeID =
+  | "friend_test"
+  | "ten_ten_ten"
+  | "pre_mortem"
+  | "worst_case"
+  | "inversion"
+  | "inaction_cost"
+  | "values_check";
+
+type BiasChallengeItem = {
+  type: BiasChallengeTypeID;
+  question: string;
+  response: string;
+  quickPickOptions?: string[];
+};
+
+const allBiasChallengeTypes: BiasChallengeTypeID[] = [
+  "friend_test",
+  "ten_ten_ten",
+  "pre_mortem",
+  "worst_case",
+  "inversion",
+  "inaction_cost",
+  "values_check"
+];
+
+const biasChallengeStopwords = new Set([
+  "the", "and", "for", "with", "that", "this", "from", "what", "which",
+  "would", "could", "should", "about", "into", "after", "before", "over",
+  "under", "between", "option", "candidate", "choose", "choosing", "your",
+  "their", "team", "hire", "more", "less"
+]);
+
+function normalizeBiasChallengeType(raw: string): BiasChallengeTypeID {
+  const normalized = normalizeWhitespace(raw).toLowerCase().replace(/[-\s]+/g, "_");
+  if ((allBiasChallengeTypes as string[]).includes(normalized)) {
+    return normalized as BiasChallengeTypeID;
+  }
+  if (normalized === "friendtest") return "friend_test";
+  if (normalized === "tententen") return "ten_ten_ten";
+  if (normalized === "premortem") return "pre_mortem";
+  if (normalized === "worstcase") return "worst_case";
+  if (normalized === "inactioncost") return "inaction_cost";
+  if (normalized === "valuescheck") return "values_check";
+  return "friend_test";
+}
+
+function pickOrderedBiasChallengeTypes(userProfile: unknown): BiasChallengeTypeID[] {
+  const record = (typeof userProfile === "object" && userProfile !== null)
+    ? userProfile as Record<string, unknown>
+    : {};
+  const challenge = normalizeWhitespace(typeof record.biggestChallenge === "string" ? record.biggestChallenge : "").toLowerCase();
+  switch (challenge) {
+  case "overthinking":
+    return ["inversion", "inaction_cost", "friend_test"];
+  case "fear":
+    return ["worst_case", "friend_test", "pre_mortem"];
+  case "too_many_options":
+    return ["values_check", "inversion", "inaction_cost"];
+  default:
+    return ["pre_mortem", "inversion", "values_check"];
+  }
+}
+
+function extractProperNames(text: string): string[] {
+  const matches = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b/g) ?? [];
+  const blocked = new Set(["Project", "Situation", "Clarifying", "User", "Option", "Candidate"]);
+  const names = matches
+    .map((item) => normalizeWhitespace(item))
+    .filter((item) => item.length > 1 && !blocked.has(item));
+  return [...new Set(names)];
+}
+
+function extractPreferenceContrast(preferredOption: string, situationText: string, clarifyingQuestions: unknown): { preferred: string; alternative: string } {
+  const preferred = normalizeWhitespace(preferredOption) || "this option";
+  const inferredNames = extractProperNames(`${situationText}\n${JSON.stringify(clarifyingQuestions ?? [])}`);
+  const preferredLower = preferred.toLowerCase();
+  const alternatives = inferredNames.filter((item) => item.toLowerCase() !== preferredLower && !preferredLower.includes(item.toLowerCase()));
+  return {
+    preferred,
+    alternative: alternatives[0] ?? "the alternative option"
+  };
+}
+
+function extractSignalForOption(optionName: string, narrative: string, mode: "weakness" | "strength"): string | null {
+  if (!optionName || !narrative) {
+    return null;
+  }
+  const lowerName = optionName.toLowerCase();
+  const lastName = lowerName.split(" ").filter(Boolean).pop() ?? lowerName;
+  const weaknessSignals = ["weak", "limited", "lacks", "weaker", "slower", "less experience", "no experience", "junior", "gap"];
+  const strengthSignals = ["strong", "excellent", "extensive", "built", "deployed", "led", "proven", "experienced", "fast"];
+  const signals = mode === "weakness" ? weaknessSignals : strengthSignals;
+  const sentences = narrative
+    .split(/[\n\.!?]/g)
+    .map((item) => normalizeWhitespace(item))
+    .filter(Boolean);
+
+  for (const sentence of sentences) {
+    const lower = sentence.toLowerCase();
+    if (!lower.includes(lowerName) && !lower.includes(lastName)) {
+      continue;
+    }
+    if (signals.some((signal) => lower.includes(signal))) {
+      return clampSingleSentence(sentence, 58);
+    }
+  }
+  return null;
+}
+
+function challengeQuestionStem(question: string, tokenCount = 6): string {
+  return normalizeWhitespace(question.toLowerCase())
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, tokenCount)
+    .join(" ");
+}
+
+function buildSpecificityTokens(
+  situationText: string,
+  clarifyingQuestions: unknown,
+  preferredOption: string
+): Set<string> {
+  const text = `${situationText}\n${JSON.stringify(clarifyingQuestions ?? [])}`;
+  const allTokens = tokenizeForRetrieval(text).filter((token) => !biasChallengeStopwords.has(token));
+  const nameTokens = new Set(tokenizeForRetrieval(preferredOption));
+  const filtered = allTokens.filter((token) => !nameTokens.has(token));
+  return new Set(filtered);
+}
+
+function questionSpecificityScore(question: string, specificityTokens: Set<string>): number {
+  const tokens = tokenizeForRetrieval(question);
+  let score = 0;
+  for (const token of tokens) {
+    if (specificityTokens.has(token)) {
+      score += 2;
+    }
+  }
+  if (/\d/.test(question)) {
+    score += 2;
+  }
+  if (/(salary|visa|remote|constraint|risk|months|weeks|quarter|budget|skills?)/i.test(question)) {
+    score += 1;
+  }
+  return score;
+}
+
+function buildFallbackBiasChallengePool(
+  preferredOption: string,
+  situationText: string,
+  clarifyingQuestions: unknown,
+  userProfile: unknown
+): Record<BiasChallengeTypeID, string> {
+  const profileRecord = (typeof userProfile === "object" && userProfile !== null)
+    ? userProfile as Record<string, unknown>
+    : {};
+  const values = Array.isArray(profileRecord.valuesRanking)
+    ? profileRecord.valuesRanking.filter((item): item is string => typeof item === "string")
+    : [];
+  const topValue = normalizeWhitespace(values[0] ?? "your top value");
+  const narrative = `${situationText}\n${JSON.stringify(clarifyingQuestions ?? [])}`;
+  const contrast = extractPreferenceContrast(preferredOption, situationText, clarifyingQuestions);
+  const weakness = extractSignalForOption(contrast.preferred, narrative, "weakness");
+  const strength = extractSignalForOption(contrast.alternative, narrative, "strength");
+
+  return {
+    friend_test: `Can you justify choosing ${contrast.preferred} over ${contrast.alternative} in one sentence?`,
+    pre_mortem: weakness
+      ? `${contrast.preferred}: ${weakness}. Can your team cover this in the first 6 months?`
+      : `What is the likeliest reason ${contrast.preferred} fails after 6 months?`,
+    inversion: strength
+      ? `What do you lose by not choosing ${contrast.alternative}, given ${strength}?`
+      : `Which option would you regret not choosing more, and why?`,
+    worst_case: `If ${contrast.preferred} underperforms in 3 months, what is your backup plan?`,
+    ten_ten_ten: `Will this choice still feel right in 1 year when early excitement fades?`,
+    inaction_cost: "What happens to outcomes if you delay this decision by 2 more weeks?",
+    values_check: `Does choosing ${contrast.preferred} protect ${topValue}, or only feel safer now?`
+  };
+}
+
+function buildQuickPickOptions(
+  type: BiasChallengeTypeID,
+  preferredOption: string,
+  situationText: string,
+  clarifyingQuestions: unknown,
+  userProfile: unknown
+): string[] {
+  const profileRecord = (typeof userProfile === "object" && userProfile !== null)
+    ? userProfile as Record<string, unknown>
+    : {};
+  const values = Array.isArray(profileRecord.valuesRanking)
+    ? profileRecord.valuesRanking.filter((item): item is string => typeof item === "string")
+    : [];
+  const topValue = normalizeWhitespace(values[0] ?? "your top value");
+  const contrast = extractPreferenceContrast(preferredOption, situationText, clarifyingQuestions);
+  switch (type) {
+  case "friend_test":
+    return [
+      `I can justify ${contrast.preferred} clearly`,
+      `${contrast.alternative} has a stronger case`,
+      "I still need stronger evidence",
+      "Both cases look equally strong"
+    ];
+  case "pre_mortem":
+    return [
+      "Main risk is capability gap",
+      "Main risk is execution speed",
+      "Main risk is stakeholder fit",
+      "Risk is manageable with safeguards"
+    ];
+  case "inversion":
+    return [
+      `I would regret skipping ${contrast.alternative}`,
+      `I would regret skipping ${contrast.preferred}`,
+      "Regret risk looks balanced",
+      "Regret depends on timeline"
+    ];
+  case "worst_case":
+    return [
+      "I have a clear backup plan",
+      "Backup plan is weak",
+      "Worst-case is acceptable",
+      "Worst-case is unacceptable"
+    ];
+  case "ten_ten_ten":
+    return [
+      "Still right in one year",
+      "Feels right only now",
+      "Unsure after initial phase",
+      "Need long-term validation"
+    ];
+  case "inaction_cost":
+    return [
+      "Delay cost is high",
+      "Delay cost is moderate",
+      "Delay cost is low",
+      "Need data on delay impact"
+    ];
+  case "values_check":
+    return [
+      `Aligned with ${topValue}`,
+      "Partially aligned with values",
+      "Feels safe but misaligned",
+      "Value alignment is unclear"
+    ];
+  default:
+    return [
+      "Need one more data point",
+      "Current direction is still valid",
+      "Risk feels higher than expected",
+      "Tie remains unresolved"
+    ];
+  }
+}
+
+function normalizeBiasChallengeQuestion(question: string): string {
+  return clampSingleSentence(question, biasChallengeQuestionMaxLength);
+}
+
+function sanitizeBiasChallengeItems(
+  rawChallenges: unknown,
+  preferredOption: string,
+  situationText: string,
+  clarifyingQuestions: unknown,
+  userProfile: unknown
+): BiasChallengeItem[] {
+  const fallbackPool = buildFallbackBiasChallengePool(preferredOption, situationText, clarifyingQuestions, userProfile);
+  const preferredOrder = pickOrderedBiasChallengeTypes(userProfile);
+  const preferredSet = new Set(preferredOrder);
+  const fillOrder = [...preferredOrder, ...allBiasChallengeTypes.filter((type) => !preferredSet.has(type))];
+  const specificityTokens = buildSpecificityTokens(situationText, clarifyingQuestions, preferredOption);
+  const parsed = Array.isArray(rawChallenges) ? rawChallenges as Array<Record<string, unknown>> : [];
+
+  const accepted: BiasChallengeItem[] = [];
+  const usedTypes = new Set<BiasChallengeTypeID>();
+  const usedStems = new Set<string>();
+  let imagineUsed = 0;
+
+  for (const item of parsed) {
+    const type = normalizeBiasChallengeType(typeof item.type === "string" ? item.type : "friend_test");
+    if (usedTypes.has(type)) {
+      continue;
+    }
+    const question = normalizeBiasChallengeQuestion(typeof item.question === "string" ? item.question : "");
+    if (!question) {
+      continue;
+    }
+    const stem = challengeQuestionStem(question);
+    if (!stem || usedStems.has(stem)) {
+      continue;
+    }
+    const startsWithImagine = /^imagine\b/i.test(question);
+    if (startsWithImagine && imagineUsed >= 1) {
+      continue;
+    }
+    const specificity = questionSpecificityScore(question, specificityTokens);
+    if (specificity < 1) {
+      continue;
+    }
+    usedTypes.add(type);
+    usedStems.add(stem);
+    if (startsWithImagine) {
+      imagineUsed += 1;
+    }
+    accepted.push({
+      type,
+      question,
+      response: typeof item.response === "string" ? item.response : "",
+      quickPickOptions: buildQuickPickOptions(type, preferredOption, situationText, clarifyingQuestions, userProfile)
+        .map((item) => clampWords(item, 15))
+        .filter(Boolean)
+        .slice(0, 5)
+    });
+    if (accepted.length >= 3) {
+      break;
+    }
+  }
+
+  for (const type of fillOrder) {
+    if (accepted.length >= 3) {
+      break;
+    }
+    if (usedTypes.has(type)) {
+      continue;
+    }
+    const question = normalizeBiasChallengeQuestion(fallbackPool[type]);
+    if (!question) {
+      continue;
+    }
+    const stem = challengeQuestionStem(question);
+    if (!stem || usedStems.has(stem)) {
+      continue;
+    }
+    const startsWithImagine = /^imagine\b/i.test(question);
+    if (startsWithImagine && imagineUsed >= 1) {
+      continue;
+    }
+    usedTypes.add(type);
+    usedStems.add(stem);
+    if (startsWithImagine) {
+      imagineUsed += 1;
+    }
+    accepted.push({
+      type,
+      question,
+      response: "",
+      quickPickOptions: buildQuickPickOptions(type, preferredOption, situationText, clarifyingQuestions, userProfile)
+        .map((item) => clampWords(item, 15))
+        .filter(Boolean)
+        .slice(0, 5)
+    });
+  }
+
+  return accepted.slice(0, 3);
+}
+
+function shouldRepairBiasChallenges(
+  rawChallenges: unknown,
+  sanitized: BiasChallengeItem[],
+  preferredOption: string,
+  situationText: string,
+  clarifyingQuestions: unknown
+): boolean {
+  if (sanitized.length < 3) {
+    return true;
+  }
+  const specificityTokens = buildSpecificityTokens(situationText, clarifyingQuestions, preferredOption);
+  const specificCount = sanitized.filter((item) => questionSpecificityScore(item.question, specificityTokens) >= 1).length;
+  if (specificCount < 2) {
+    return true;
+  }
+  const parsed = Array.isArray(rawChallenges) ? rawChallenges as Array<Record<string, unknown>> : [];
+  if (parsed.length < 3) {
+    return true;
+  }
+  return false;
+}
+
 function makeOptionId(label: string, index: number): string {
   const base = label
     .toLowerCase()
@@ -531,6 +975,45 @@ function enforceCitationAwareStructuredContent(content: string, citations: Evide
   ].join("\n");
 }
 
+function enforceReassuranceContent(content: string, citations: EvidenceCitation[]): string {
+  const compact = normalizeWhitespace(content);
+  const hasSections = compact.includes("Reassurance now") &&
+    compact.includes("Why this still holds") &&
+    compact.includes("What could invalidate it") &&
+    compact.includes("Concrete next action in 48 hours");
+  if (hasSections) {
+    return content.trim();
+  }
+  if (citations.length > 0) {
+    return [
+      "Reassurance now",
+      compact || "Your reasoning is solid enough to move forward with one controlled validation.",
+      "",
+      "Why this still holds",
+      "The current top option still aligns with your weighted criteria and constraints.",
+      "",
+      "What could invalidate it",
+      "A single high-impact assumption could flip the decision if new evidence contradicts it.",
+      "",
+      "Concrete next action in 48 hours",
+      "Run one targeted validation step and decide on a fixed deadline."
+    ].join("\n");
+  }
+  return [
+    "Reassurance now",
+    "Current reassurance is provisional because evidence support is limited.",
+    "",
+    "Why this still holds",
+    "The direction is plausible, but it needs stronger validation from your sources.",
+    "",
+    "What could invalidate it",
+    "Unverified assumptions may change the winner.",
+    "",
+    "Concrete next action in 48 hours",
+    "Add one concrete evidence source and regenerate reassurance."
+  ].join("\n");
+}
+
 function hasLowVarianceScores(payload: unknown): boolean {
   if (typeof payload !== "object" || payload === null) {
     return false;
@@ -583,6 +1066,26 @@ function hasLowVarianceScores(payload: unknown): boolean {
 const conversationQuestionWordLimit = 25;
 const conversationOptionWordLimit = 15;
 const conversationTransitionWordLimit = 30;
+const genericConversationQuestionPatterns = [
+  /tell me more/i,
+  /share more/i,
+  /more context/i,
+  /^what do you think/i,
+  /^how do you feel/i
+];
+
+function isGenericQuestionText(question: string): boolean {
+  const normalized = normalizeWhitespace(question).toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  if (genericConversationQuestionPatterns.some((pattern) => pattern.test(normalized))) {
+    return true;
+  }
+  return normalized.startsWith("what else") ||
+    normalized.startsWith("anything else") ||
+    normalized.includes("any additional details");
+}
 
 type ConversationCallableResponse = {
   message: {
@@ -712,6 +1215,9 @@ function exceedsConversationLimits(payload: ConversationCallableResponse): boole
   if (payload.message.isTransition) {
     return wordCount(payload.message.content) > conversationTransitionWordLimit;
   }
+  if (genericConversationQuestionPatterns.some((pattern) => pattern.test(payload.message.content))) {
+    return true;
+  }
   if (wordCount(payload.message.content) > conversationQuestionWordLimit) {
     return true;
   }
@@ -830,10 +1336,11 @@ const aiFunctionOptions = {
 
 export const suggestRankingInputs = onCall(aiFunctionOptions, async (request) => {
   const systemPrompt = await readPromptFile("system.txt");
-  const { projectId, vendors, extractedText, usageContext, contextNarrative, userProfile } = request.data;
+  const { projectId, vendors, extractedText, usageContext, contextNarrative, userProfile, unifiedContext } = request.data;
+  const unifiedBlob = unifiedContextBlob(unifiedContext);
   const knowledgeCards = await loadKnowledgeCards();
   const retrievedCards = retrieveKnowledgeCards(knowledgeCards, {
-    contextNarrative: String(contextNarrative ?? ""),
+    contextNarrative: `${String(contextNarrative ?? "")}\n${unifiedBlob}`,
     usageContext: String(usageContext ?? ""),
     userProfile,
     phase: "matrix_setup",
@@ -851,6 +1358,7 @@ export const suggestRankingInputs = onCall(aiFunctionOptions, async (request) =>
     "You are constructing a weighted decision matrix for this specific case.",
     `Project: ${projectId ?? ""}`,
     `Situation: ${contextNarrative ?? ""}`,
+    `Unified context: ${unifiedBlob}`,
     `Usage context: ${usageContext ?? "unknown"}`,
     `Options: ${optionSummary}`,
     `User profile: ${JSON.stringify(userProfile ?? {})}`,
@@ -914,10 +1422,11 @@ export const suggestRankingInputs = onCall(aiFunctionOptions, async (request) =>
 
 export const generateClarifyingQuestions = onCall(aiFunctionOptions, async (request) => {
   const systemPrompt = await readPromptFile("system.txt");
-  const { projectId, situationText, userProfile } = request.data;
+  const { projectId, situationText, userProfile, unifiedContext } = request.data;
+  const unifiedBlob = unifiedContextBlob(unifiedContext);
   const knowledgeCards = await loadKnowledgeCards();
   const retrievedCards = retrieveKnowledgeCards(knowledgeCards, {
-    contextNarrative: String(situationText ?? ""),
+    contextNarrative: `${String(situationText ?? "")}\n${unifiedBlob}`,
     usageContext: String(userProfile?.primaryUsage ?? "other"),
     userProfile,
     phase: "clarifying_questions",
@@ -928,6 +1437,7 @@ export const generateClarifyingQuestions = onCall(aiFunctionOptions, async (requ
     "Generate clarifying questions that directly improve decision quality.",
     `Project: ${projectId ?? ""}`,
     `Situation: ${situationText ?? ""}`,
+    `Unified context: ${unifiedBlob}`,
     `User profile: ${JSON.stringify(userProfile ?? {})}`,
     "",
     "RETRIEVED KNOWLEDGE CARDS (use these to avoid generic questions):",
@@ -946,48 +1456,74 @@ export const generateClarifyingQuestions = onCall(aiFunctionOptions, async (requ
   ].join("\n");
 
   const payloadRaw = await askGeminiJSON(fastModel, systemPrompt, prompt, 0.2);
-  const payload = (typeof payloadRaw === "object" && payloadRaw !== null) ? payloadRaw as Record<string, unknown> : {};
-  const sharedCitations = parseCitations(payload.citations, retrievedCards, "question");
-  const questionItems = Array.isArray(payload.questions) ? payload.questions : [];
-  const questions = questionItems.map((item) => {
-    if (typeof item === "string") {
-      return {
-        question: clampSingleSentence(item, 140),
-        answer: "",
-        citations: sharedCitations
-      };
-    }
-    if (typeof item === "object" && item !== null) {
-      const record = item as Record<string, unknown>;
-      const question = clampSingleSentence(typeof record.question === "string" ? record.question : "", 140);
-      if (!question) {
-        return null;
+  const toQuestions = (rawPayload: unknown) => {
+    const payload = (typeof rawPayload === "object" && rawPayload !== null) ? rawPayload as Record<string, unknown> : {};
+    const shared = parseCitations(payload.citations, retrievedCards, "question");
+    const questionItems = Array.isArray(payload.questions) ? payload.questions : [];
+    const items = questionItems.map((item) => {
+      if (typeof item === "string") {
+        return {
+          question: clampSingleSentence(item, 140),
+          answer: "",
+          citations: shared
+        };
       }
-      return {
-        question,
-        answer: "",
-        citations: parseCitations(record.citations, retrievedCards, "question")
-      };
+      if (typeof item === "object" && item !== null) {
+        const record = item as Record<string, unknown>;
+        const question = clampSingleSentence(typeof record.question === "string" ? record.question : "", 140);
+        if (!question) {
+          return null;
+        }
+        return {
+          question,
+          answer: "",
+          citations: parseCitations(record.citations, retrievedCards, "question")
+        };
+      }
+      return null;
+    }).filter((item): item is { question: string; answer: string; citations: EvidenceCitation[] } => item !== null);
+    return { questions: items, citations: shared };
+  };
+
+  let parsed = toQuestions(payloadRaw);
+  const needsRepair = parsed.questions.length < 6 || parsed.questions.some((item) => isGenericQuestionText(item.question));
+  if (needsRepair) {
+    const repairPrompt = [
+      prompt,
+      "",
+      "REPAIR INSTRUCTION:",
+      "- Replace generic questions with situation-specific, closed-ended questions.",
+      "- Every question must reference at least one concrete fact from the situation or unified context.",
+      "- Keep one sentence per question.",
+      "Previous output JSON:",
+      JSON.stringify(payloadRaw)
+    ].join("\n");
+    const repairedPayload = await askGeminiJSON(reasoningModel, systemPrompt, repairPrompt, 0.12);
+    const repaired = toQuestions(repairedPayload);
+    if (repaired.questions.length >= parsed.questions.length) {
+      parsed = repaired;
     }
-    return null;
-  }).filter((item): item is { question: string; answer: string; citations: EvidenceCitation[] } => item !== null);
+  }
 
   return {
-    questions,
-    citations: sharedCitations
+    questions: parsed.questions,
+    citations: parsed.citations
   };
 });
 
 export const suggestDecisionOptions = onCall(aiFunctionOptions, async (request) => {
   const systemPrompt = await readPromptFile("system.txt");
-  const { projectId, situationText, clarifyingQuestions, userProfile } = request.data;
+  const { projectId, situationText, clarifyingQuestions, userProfile, unifiedContext } = request.data;
+  const unifiedBlob = unifiedContextBlob(unifiedContext);
   const contextBlob = JSON.stringify({
     situationText: situationText ?? "",
-    clarifyingQuestions: clarifyingQuestions ?? []
+    clarifyingQuestions: clarifyingQuestions ?? [],
+    unifiedContext: unifiedBlob
   });
   const prompt = [
     `Project: ${projectId}`,
     `Situation: ${situationText ?? ""}`,
+    `Unified context: ${unifiedBlob}`,
     `Clarifying answers: ${JSON.stringify(clarifyingQuestions ?? [])}`,
     `User profile: ${JSON.stringify(userProfile ?? {})}`,
     "Extract and normalize explicit primary decision options from the user context.",
@@ -1010,52 +1546,104 @@ export const suggestDecisionOptions = onCall(aiFunctionOptions, async (request) 
 
 export const generateBiasChallenges = onCall(aiFunctionOptions, async (request) => {
   const systemPrompt = await readPromptFile("system.txt");
-  const { projectId, preferredOption, situationText, clarifyingQuestions, userProfile } = request.data;
+  const {
+    projectId,
+    preferredOption,
+    situationText,
+    clarifyingQuestions,
+    userProfile,
+    unifiedContext,
+    challengeResponsesSummary
+  } = request.data;
+  const preferred = String(preferredOption ?? "");
+  const situation = String(situationText ?? "");
+  const unifiedBlob = unifiedContextBlob(unifiedContext);
+  const clarifying = clarifyingQuestions ?? [];
   const prompt = [
     `Project: ${projectId}`,
-    `Situation: ${situationText ?? ""}`,
-    `Clarifying answers: ${JSON.stringify(clarifyingQuestions ?? [])}`,
-    `Apparent preference: ${preferredOption ?? ""}`,
+    `Situation: ${situation}`,
+    `Unified context: ${unifiedBlob}`,
+    `Clarifying answers: ${JSON.stringify(clarifying)}`,
+    `Previous challenge responses: ${JSON.stringify(challengeResponsesSummary ?? [])}`,
+    `Apparent preference: ${preferred}`,
     `User profile: ${JSON.stringify(userProfile ?? {})}`,
-    "Select exactly 3 debiasing exercises from [friend_test, ten_ten_ten, pre_mortem, worst_case, inversion, inaction_cost, values_check].",
+    "",
+    "Generate exactly 3 bias challenge questions. Each must:",
+    "1. Use a DIFFERENT exercise type (never repeat the same type)",
+    "2. Reference SPECIFIC facts from the situation (strengths, weaknesses, numbers, constraints — not just names)",
+    "3. Force a concrete trade-off or risk assessment, not vague reflection",
+    "4. Be ONE sentence, max 100 characters",
+    "5. NOT start with 'Imagine' for more than one question",
+    "",
+    "GOOD examples (specific, forces trade-off):",
+    '- "Sara has weak data skills — can your team absorb that gap in the first 6 months?"',
+    '- "If Omar leaves after 1 year for a bigger company, was the hire still worth it?"',
+    '- "Which candidate would you regret NOT hiring more — and why?"',
+    "",
+    "BAD examples (vague, templated):",
+    '- "Imagine this hire fails; what specific actions led to that outcome for Sara"',
+    '- "How will choosing Sara feel in 10 minutes, 10 months, 10 years?"',
+    "",
+    "Exercise types to choose from: friend_test, ten_ten_ten, pre_mortem, worst_case, inversion, inaction_cost, values_check",
+    "",
     "Personalization rules:",
-    "- Reference specific names/stakes from the decision.",
-    "- If biggest challenge suggests overthinking, prefer commitment-forcing prompts (inversion, worst_case).",
-    "- If biggest challenge suggests fear, prefer risk-normalizing prompts (pre_mortem, inaction_cost).",
-    "- Force trade-off clarity, do not ask vague reflection questions.",
-    "Formatting rules:",
-    "- Each question must be one sentence.",
-    "- Each question must be <=120 characters.",
+    "- If user challenge is overthinking → use inversion + inaction_cost + one other",
+    "- If user challenge is fear → use worst_case + friend_test + one other",
+    "- If user challenge is too_many_options → use values_check + inversion + one other",
     "Return JSON only in this shape:",
-    '{ "challenges": [{"type":"friend_test", "question":"", "response": ""}] }'
+    '{ "challenges": [{"type":"friend_test", "question":"...", "response": ""}] }'
   ].join("\n");
 
-  const payload = await askGeminiJSON(fastModel, systemPrompt, prompt, 0.2);
-  const challenges = Array.isArray(payload.challenges) ? payload.challenges as Array<Record<string, unknown>> : [];
-  return challenges
-    .map((item) => {
-      const type = typeof item.type === "string" ? item.type : "friend_test";
-      const questionRaw = typeof item.question === "string" ? item.question : "";
-      return {
-        type,
-        question: clampSingleSentence(questionRaw),
-        response: typeof item.response === "string" ? item.response : ""
-      };
-    })
-    .filter((item) => item.question.length > 0)
-    .slice(0, 3);
+  const firstPayload = await askGeminiJSON(fastModel, systemPrompt, prompt, 0.2);
+  const firstRawChallenges = (typeof firstPayload === "object" && firstPayload !== null)
+    ? (firstPayload as Record<string, unknown>).challenges
+    : [];
+  const firstSanitized = sanitizeBiasChallengeItems(
+    firstRawChallenges,
+    preferred,
+    `${situation}\n${unifiedBlob}`,
+    clarifying,
+    userProfile
+  );
+  if (!shouldRepairBiasChallenges(firstRawChallenges, firstSanitized, preferred, `${situation}\n${unifiedBlob}`, clarifying)) {
+    return firstSanitized;
+  }
+
+  const repairPrompt = [
+    prompt,
+    "",
+    "REPAIR INSTRUCTION:",
+    "- Your previous output was repetitive or not specific enough.",
+    "- Return 3 challenges with unique types, unique sentence stems, and specific facts.",
+    "- Ensure at least two questions reference constraints, strengths, weaknesses, numbers, or timeline.",
+    "- Keep every question one sentence and max 100 characters.",
+    "Previous output JSON:",
+    JSON.stringify(firstPayload)
+  ].join("\n");
+  const repairedPayload = await askGeminiJSON(reasoningModel, systemPrompt, repairPrompt, 0.12);
+  const repairedRawChallenges = (typeof repairedPayload === "object" && repairedPayload !== null)
+    ? (repairedPayload as Record<string, unknown>).challenges
+    : [];
+  return sanitizeBiasChallengeItems(
+    repairedRawChallenges,
+    preferred,
+    `${situation}\n${unifiedBlob}`,
+    clarifying,
+    userProfile
+  );
 });
 
 export const decisionChat = onCall(aiFunctionOptions, async (request) => {
   const systemPrompt = await readPromptFile("system.txt");
-  const { projectId, phase, message, draft, userProfile } = request.data;
+  const { projectId, phase, message, draft, userProfile, unifiedContext, attachmentsSummary, challengeResponsesSummary } = request.data;
   const reassuranceMode = phase === "post_challenge_reassurance";
+  const unifiedBlob = unifiedContextBlob(unifiedContext);
   const knowledgeCards = await loadKnowledgeCards();
   const usageHint = typeof draft?.usageContext === "string"
     ? draft.usageContext
     : (typeof userProfile?.primaryUsage === "string" ? userProfile.primaryUsage : "other");
   const retrievedCards = retrieveKnowledgeCards(knowledgeCards, {
-    contextNarrative: `${String(message ?? "")}\n${JSON.stringify(draft ?? {})}`,
+    contextNarrative: `${String(message ?? "")}\n${JSON.stringify(draft ?? {})}\n${unifiedBlob}`,
     usageContext: String(usageHint),
     userProfile,
     phase: String(phase ?? ""),
@@ -1067,13 +1655,16 @@ export const decisionChat = onCall(aiFunctionOptions, async (request) => {
     `Phase: ${phase}`,
     `User message: ${message}`,
     `Draft context: ${JSON.stringify(draft ?? {})}`,
+    `Unified context: ${unifiedBlob}`,
+    `Attachments summary: ${JSON.stringify(attachmentsSummary ?? [])}`,
+    `Challenge responses summary: ${JSON.stringify(challengeResponsesSummary ?? [])}`,
     `User profile: ${JSON.stringify(userProfile ?? {})}`,
     "",
     "RETRIEVED KNOWLEDGE CARDS (use and cite these sources):",
     knowledgeBlock,
     "PHASE BEHAVIOR:",
     reassuranceMode
-      ? "- Post-challenge reassurance: validate emotion, restate trade-off reality, and give stabilizing next action."
+      ? "- Post-challenge reassurance: validate emotion, restate trade-off reality, and give stabilizing next action with concrete 48-hour action."
       : "- If critical context is missing, ask one high-leverage closed-ended question before advice.",
     "- Keep response concise and concrete.",
     "- No generic filler language.",
@@ -1083,12 +1674,9 @@ export const decisionChat = onCall(aiFunctionOptions, async (request) => {
     "- End with either a question OR an action, not both.",
     "Return JSON only:",
     '{ "content": "", "recommendedActions": [""], "citations": [{"cardId":"", "sourceLabel":"", "usedFor":"recommendation"}] }',
-    "When phase is analysis/results/reassurance, content must follow exactly:",
-    "Recommendation",
-    "Why this option leads",
-    "Risks to consider",
-    "Confidence level",
-    "Next step"
+    reassuranceMode
+      ? "For post_challenge_reassurance phase, content must follow exactly: Reassurance now / Why this still holds / What could invalidate it / Concrete next action in 48 hours."
+      : "For analysis/results/follow_up_delta phases, content must follow exactly: Recommendation / Why this option leads / Risks to consider / Confidence level / Next step."
   ].join("\n");
 
   const payload = await askGeminiJSON(fastModel, systemPrompt, prompt, 0.2) as Record<string, unknown>;
@@ -1101,20 +1689,223 @@ export const decisionChat = onCall(aiFunctionOptions, async (request) => {
 
   return {
     content: shouldStructure
-      ? enforceCitationAwareStructuredContent(rawContent, citations)
+      ? (reassuranceMode
+          ? enforceReassuranceContent(rawContent, citations)
+          : enforceCitationAwareStructuredContent(rawContent, citations))
       : (rawContent.trim() || "I need more context to give a grounded answer."),
     recommendedActions,
     citations
   };
 });
 
+type NormalizedInsightPayload = {
+  summary: string;
+  winnerReasoning: string;
+  riskFlags: string[];
+  overlookedStrategicPoints: string[];
+  sensitivityFindings: string[];
+  drivers: string[];
+  confidenceLabel: string;
+  nextStep: string;
+};
+
+const genericInsightPhrases = [
+  "weak or sparse evidence",
+  "validate the top uncertainty",
+  "small weight changes can flip",
+  "currently leading",
+  "confidence is limited by weak or sparse evidence"
+];
+
+function parseInsightLineList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .filter((item): item is string => typeof item === "string")
+    .map(normalizeWhitespace)
+    .filter(Boolean);
+}
+
+function extractInsightNames(draft: unknown, result: unknown): { criteriaNames: string[]; optionNames: string[] } {
+  const draftRecord = (typeof draft === "object" && draft !== null) ? draft as Record<string, unknown> : {};
+  const resultRecord = (typeof result === "object" && result !== null) ? result as Record<string, unknown> : {};
+  const criteriaNames = Array.isArray(draftRecord.criteria)
+    ? (draftRecord.criteria as Array<Record<string, unknown>>)
+      .map((item) => normalizeWhitespace(typeof item.name === "string" ? item.name : ""))
+      .filter(Boolean)
+    : [];
+  const optionNamesFromResult = Array.isArray(resultRecord.rankedVendors)
+    ? (resultRecord.rankedVendors as Array<Record<string, unknown>>)
+      .map((item) => normalizeWhitespace(typeof item.vendorName === "string" ? item.vendorName : ""))
+      .filter(Boolean)
+    : [];
+  const optionNamesFromDraft = Array.isArray(draftRecord.vendors)
+    ? (draftRecord.vendors as Array<Record<string, unknown>>)
+      .map((item) => normalizeWhitespace(typeof item.name === "string" ? item.name : ""))
+      .filter(Boolean)
+    : [];
+  const optionNames = [...new Set([...optionNamesFromResult, ...optionNamesFromDraft])];
+  return { criteriaNames, optionNames };
+}
+
+function containsGenericInsightPhrase(text: string): boolean {
+  const lower = normalizeWhitespace(text).toLowerCase();
+  return genericInsightPhrases.some((phrase) => lower.includes(phrase));
+}
+
+function mentionsAny(text: string, terms: string[]): boolean {
+  const lower = normalizeWhitespace(text).toLowerCase();
+  return terms
+    .map((item) => normalizeWhitespace(item).toLowerCase())
+    .filter((item) => item.length >= 3)
+    .some((item) => lower.includes(item));
+}
+
+function inferInsightConfidenceLabel(payload: NormalizedInsightPayload): string {
+  if (payload.confidenceLabel) {
+    return payload.confidenceLabel;
+  }
+  const blob = [
+    payload.summary,
+    payload.winnerReasoning,
+    ...payload.riskFlags,
+    ...payload.sensitivityFindings
+  ].join(" ").toLowerCase();
+  if (blob.includes("low confidence") || blob.includes("near tie") || blob.includes("winner can flip")) {
+    return "Low";
+  }
+  if (blob.includes("high confidence") || blob.includes("stable lead")) {
+    return "High";
+  }
+  return "Medium";
+}
+
+function normalizeInsightPayload(raw: unknown): NormalizedInsightPayload {
+  const record = (typeof raw === "object" && raw !== null) ? raw as Record<string, unknown> : {};
+  const summary = normalizeWhitespace(typeof record.summary === "string" ? record.summary : "");
+  const winnerReasoning = normalizeWhitespace(typeof record.winnerReasoning === "string" ? record.winnerReasoning : "");
+  const riskFlags = parseInsightLineList(record.riskFlags);
+  const overlookedStrategicPoints = parseInsightLineList(record.overlookedStrategicPoints);
+  const sensitivityFindings = parseInsightLineList(record.sensitivityFindings);
+  const drivers = parseInsightLineList(record.drivers);
+  const confidenceLabel = normalizeWhitespace(typeof record.confidenceLabel === "string" ? record.confidenceLabel : "");
+  const nextStep = normalizeWhitespace(typeof record.nextStep === "string" ? record.nextStep : (overlookedStrategicPoints[0] ?? ""));
+
+  return {
+    summary,
+    winnerReasoning,
+    riskFlags,
+    overlookedStrategicPoints,
+    sensitivityFindings,
+    drivers,
+    confidenceLabel,
+    nextStep
+  };
+}
+
+function validateInsightPayload(
+  payload: NormalizedInsightPayload,
+  criteriaNames: string[],
+  optionNames: string[]
+): { needsRepair: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+  const narrativeBlob = [
+    payload.summary,
+    payload.winnerReasoning,
+    ...payload.riskFlags,
+    ...payload.sensitivityFindings
+  ].join(" ");
+
+  if (!payload.winnerReasoning) {
+    reasons.push("winnerReasoning is empty.");
+  }
+  if (containsGenericInsightPhrase(narrativeBlob)) {
+    reasons.push("response contains banned generic phrasing.");
+  }
+  if (payload.riskFlags.length === 0) {
+    reasons.push("riskFlags is empty.");
+  }
+  if (criteriaNames.length > 0 && !mentionsAny(narrativeBlob, criteriaNames)) {
+    reasons.push("analysis does not reference any criterion names.");
+  }
+  if (optionNames.length > 0 && !mentionsAny(`${payload.winnerReasoning} ${payload.riskFlags.join(" ")}`, optionNames)) {
+    reasons.push("analysis does not reference explicit option names.");
+  }
+  if (!payload.nextStep || !/(run|schedule|request|verify|pilot|negotiate|test|check|review|compare|interview)/i.test(payload.nextStep)) {
+    reasons.push("next step is not concrete enough.");
+  }
+
+  return {
+    needsRepair: reasons.length > 0,
+    reasons
+  };
+}
+
+function defaultNextStepForContext(usageContext: string): string {
+  const lower = usageContext.toLowerCase();
+  if (lower.includes("recruit") || lower.includes("candidate") || lower.includes("hire")) {
+    return "Run a structured trial task and one reference check before finalizing.";
+  }
+  if (lower.includes("career") || lower.includes("offer") || lower.includes("job")) {
+    return "Schedule a compensation and scope validation call this week before deciding.";
+  }
+  if (lower.includes("business") || lower.includes("vendor") || lower.includes("work")) {
+    return "Run a short pilot on the highest-risk criterion before committing.";
+  }
+  return "Run one targeted validation step this week, then finalize the decision.";
+}
+
+function ensureInsightMinimum(
+  payload: NormalizedInsightPayload,
+  criteriaNames: string[],
+  optionNames: string[],
+  usageContext: string
+): NormalizedInsightPayload {
+  const winner = optionNames[0] ?? "the current top option";
+  const criterion = criteriaNames[0] ?? "the highest-weighted criterion";
+  const fallbackRisk = `If ${criterion.toLowerCase()} assumptions change, the winner can flip.`;
+  const drivers = payload.drivers.length > 0
+    ? payload.drivers
+    : criteriaNames.slice(0, 3).map((name) => `${name} is materially influencing the current ranking.`);
+
+  const winnerReasoning = payload.winnerReasoning
+    ? payload.winnerReasoning
+    : `${winner} is favored because it performs better on ${criterion}.`;
+
+  const riskFlags = payload.riskFlags.length > 0
+    ? payload.riskFlags.map((item) => containsGenericInsightPhrase(item) ? fallbackRisk : item)
+    : [fallbackRisk];
+
+  const sensitivityFindings = payload.sensitivityFindings.length > 0
+    ? payload.sensitivityFindings
+    : [`Sensitivity check: if ${criterion.toLowerCase()} is reweighted, the winner may change.`];
+
+  const nextStep = payload.nextStep || payload.overlookedStrategicPoints[0] || defaultNextStepForContext(usageContext);
+
+  const summary = payload.summary || `Current outcome favors ${winner}, but depends heavily on ${criterion}.`;
+
+  return {
+    summary,
+    winnerReasoning,
+    riskFlags: riskFlags.slice(0, 4),
+    overlookedStrategicPoints: (payload.overlookedStrategicPoints.length > 0 ? payload.overlookedStrategicPoints : [nextStep]).slice(0, 3),
+    sensitivityFindings: sensitivityFindings.slice(0, 4),
+    drivers: drivers.slice(0, 4),
+    confidenceLabel: inferInsightConfidenceLabel(payload),
+    nextStep
+  };
+}
+
 export const generateInsights = onCall(aiFunctionOptions, async (request) => {
   const systemPrompt = await readPromptFile("system.txt");
-  const { projectId, draft, result, userProfile } = request.data;
+  const { projectId, draft, result, userProfile, unifiedContext, attachmentsSummary, challengeResponsesSummary } = request.data;
+  const unifiedBlob = unifiedContextBlob(unifiedContext);
+  const usageContext = String((draft as Record<string, unknown> | undefined)?.usageContext ?? userProfile?.primaryUsage ?? "other");
   const knowledgeCards = await loadKnowledgeCards();
   const retrievedCards = retrieveKnowledgeCards(knowledgeCards, {
-    contextNarrative: `${JSON.stringify(draft ?? {})}\n${JSON.stringify(result ?? {})}`,
-    usageContext: String(draft?.usageContext ?? userProfile?.primaryUsage ?? "other"),
+    contextNarrative: `${JSON.stringify(draft ?? {})}\n${JSON.stringify(result ?? {})}\n${unifiedBlob}`,
+    usageContext,
     userProfile,
     phase: "analysis",
     topK: 8
@@ -1125,6 +1916,9 @@ export const generateInsights = onCall(aiFunctionOptions, async (request) => {
     `Project: ${projectId}`,
     `Draft payload: ${JSON.stringify(draft)}`,
     `Result payload: ${JSON.stringify(result)}`,
+    `Unified context: ${unifiedBlob}`,
+    `Attachments summary: ${JSON.stringify(attachmentsSummary ?? [])}`,
+    `Challenge responses summary: ${JSON.stringify(challengeResponsesSummary ?? [])}`,
     `User profile: ${JSON.stringify(userProfile ?? {})}`,
     "",
     "RETRIEVED KNOWLEDGE CARDS (use and cite these):",
@@ -1137,6 +1931,14 @@ export const generateInsights = onCall(aiFunctionOptions, async (request) => {
     "4) Identify blind spots not represented in the scorecard (optionality, reversibility, relationship effects).",
     "5) Tie recommendation logic to user values when available.",
     "",
+    "CRITICAL RULES:",
+    "- winnerReasoning must explain WHY the option leads on named criteria; never use generic winner text.",
+    "- riskFlags must reference specific criteria names and potential score/weight flip conditions.",
+    "- overlookedStrategicPoints and nextStep must be concrete actions specific to decision type.",
+    "- sensitivityFindings must name a criterion that could flip the winner.",
+    "- NEVER use these phrases: 'weak or sparse evidence', 'validate the top uncertainty', 'small weight changes can flip', 'currently leading'.",
+    "- Preserve explicit option names exactly as provided.",
+    "",
     "Return JSON only:",
     "{",
     '  "summary":"",',
@@ -1144,6 +1946,9 @@ export const generateInsights = onCall(aiFunctionOptions, async (request) => {
     '  "riskFlags":[""],',
     '  "overlookedStrategicPoints":[""],',
     '  "sensitivityFindings":[""],',
+    '  "drivers":[""],',
+    '  "confidenceLabel":"Low|Medium|High",',
+    '  "nextStep":"",',
     '  "citations":[{"cardId":"", "sourceLabel":"", "usedFor":"risk"}]',
     "}",
     "Constraints:",
@@ -1153,18 +1958,50 @@ export const generateInsights = onCall(aiFunctionOptions, async (request) => {
     "- include at least one citation; if support is weak, explicitly state low confidence."
   ].join("\n");
 
-  const rawPayload = await askGeminiJSON(reasoningModel, systemPrompt, prompt, 0.2);
-  const payload = (typeof rawPayload === "object" && rawPayload !== null) ? rawPayload as Record<string, unknown> : {};
-  const citations = parseCitations(payload.citations, retrievedCards, "risk");
-  const riskFlags = Array.isArray(payload.riskFlags)
-    ? payload.riskFlags.filter((item): item is string => typeof item === "string")
-    : [];
-  const summary = normalizeWhitespace(typeof payload.summary === "string" ? payload.summary : "");
+  const { criteriaNames, optionNames } = extractInsightNames(draft, result);
+  const firstRawPayload = await askGeminiJSON(reasoningModel, systemPrompt, prompt, 0.2);
+  const firstNormalized = normalizeInsightPayload(firstRawPayload);
+  const firstValidation = validateInsightPayload(firstNormalized, criteriaNames, optionNames);
+
+  let finalPayload = firstNormalized;
+  let finalRawPayload: unknown = firstRawPayload;
+  if (firstValidation.needsRepair) {
+    const repairPrompt = [
+      prompt,
+      "",
+      "REPAIR INSTRUCTION:",
+      "- Rewrite to remove generic phrasing and tie claims to concrete criteria and options.",
+      "- Ensure nextStep is concrete and actionable for this decision type.",
+      "- Ensure riskFlags and sensitivityFindings include named criterion flip logic.",
+      `Repair reasons: ${firstValidation.reasons.join(" | ")}`,
+      "Previous output JSON:",
+      JSON.stringify(firstRawPayload)
+    ].join("\n");
+    const repairedRawPayload = await askGeminiJSON(reasoningModel, systemPrompt, repairPrompt, 0.12);
+    finalRawPayload = repairedRawPayload;
+    finalPayload = normalizeInsightPayload(repairedRawPayload);
+  }
+
+  const citations = parseCitations(
+    (typeof finalRawPayload === "object" && finalRawPayload !== null)
+      ? (finalRawPayload as Record<string, unknown>).citations
+      : undefined,
+    retrievedCards,
+    "risk"
+  );
+  const ensured = ensureInsightMinimum(finalPayload, criteriaNames, optionNames, usageContext);
 
   return {
-    ...payload,
-    summary: summary || "Evidence support is limited; treat current winner as provisional.",
-    riskFlags: citations.length > 0 ? riskFlags : [...riskFlags, "Evidence support is limited; confidence is low until more validated inputs are added."],
+    summary: ensured.summary || "Evidence support is limited; treat current winner as provisional.",
+    winnerReasoning: ensured.winnerReasoning,
+    riskFlags: citations.length > 0
+      ? ensured.riskFlags
+      : [...ensured.riskFlags, "Evidence support is limited; confidence is low until more validated inputs are added."],
+    overlookedStrategicPoints: ensured.overlookedStrategicPoints,
+    sensitivityFindings: ensured.sensitivityFindings,
+    drivers: ensured.drivers,
+    confidenceLabel: ensured.confidenceLabel,
+    nextStep: ensured.nextStep,
     citations
   };
 });
@@ -1172,15 +2009,17 @@ export const generateInsights = onCall(aiFunctionOptions, async (request) => {
 export const startDecisionConversation = onCall(aiFunctionOptions, async (request) => {
   const systemPrompt = await readPromptFile("system.txt");
   const taskPrompt = await readPromptFile("start_conversation.txt");
+  const unifiedBlob = unifiedContextBlob(request.data.unifiedContext);
   const renderedPrompt = renderPrompt(taskPrompt, {
     projectId: JSON.stringify(request.data.projectId ?? ""),
     contextNarrative: JSON.stringify(request.data.contextNarrative ?? ""),
     usageContext: JSON.stringify(request.data.usageContext ?? ""),
-    userProfile: JSON.stringify(request.data.userProfile ?? {})
+    userProfile: JSON.stringify(request.data.userProfile ?? {}),
+    unifiedContext: JSON.stringify(request.data.unifiedContext ?? {})
   });
   const knowledgeCards = await loadKnowledgeCards();
   const retrievedCards = retrieveKnowledgeCards(knowledgeCards, {
-    contextNarrative: String(request.data.contextNarrative ?? ""),
+    contextNarrative: `${String(request.data.contextNarrative ?? "")}\n${unifiedBlob}`,
     usageContext: String(request.data.usageContext ?? "other"),
     userProfile: request.data.userProfile ?? {},
     phase: "conversation_start",
@@ -1199,6 +2038,7 @@ export const continueDecisionConversation = onCall(aiFunctionOptions, async (req
   const systemPrompt = await readPromptFile("system.txt");
   const taskPrompt = await readPromptFile("continue_conversation.txt");
   const transcript = Array.isArray(request.data.transcript) ? request.data.transcript as Array<Record<string, unknown>> : [];
+  const unifiedBlob = unifiedContextBlob(request.data.unifiedContext);
   const frameworksUsed = transcript
     .map((entry) => normalizeWhitespace(String(entry.framework ?? "")))
     .filter(Boolean);
@@ -1217,11 +2057,12 @@ export const continueDecisionConversation = onCall(aiFunctionOptions, async (req
     latestUserResponse: JSON.stringify(request.data.latestUserResponse ?? ""),
     selectedOptionIndex: JSON.stringify(request.data.selectedOptionIndex ?? null),
     draft: JSON.stringify(request.data.draft ?? {}),
-    userProfile: JSON.stringify(request.data.userProfile ?? {})
+    userProfile: JSON.stringify(request.data.userProfile ?? {}),
+    unifiedContext: JSON.stringify(request.data.unifiedContext ?? {})
   });
   const knowledgeCards = await loadKnowledgeCards();
   const retrievedCards = retrieveKnowledgeCards(knowledgeCards, {
-    contextNarrative: `${JSON.stringify(transcript)}\n${String(request.data.latestUserResponse ?? "")}`,
+    contextNarrative: `${JSON.stringify(transcript)}\n${String(request.data.latestUserResponse ?? "")}\n${unifiedBlob}`,
     usageContext: String(request.data.draft?.usageContext ?? request.data.userProfile?.primaryUsage ?? "other"),
     userProfile: request.data.userProfile ?? {},
     phase: "conversation_continue",
@@ -1239,16 +2080,19 @@ export const continueDecisionConversation = onCall(aiFunctionOptions, async (req
 export const finalizeConversationForMatrix = onCall(aiFunctionOptions, async (request) => {
   const systemPrompt = await readPromptFile("system.txt");
   const taskPrompt = await readPromptFile("finalize_matrix_setup.txt");
+  const unifiedBlob = unifiedContextBlob(request.data.unifiedContext);
   const prompt = renderPrompt(taskPrompt, {
     projectId: JSON.stringify(request.data.projectId ?? ""),
     transcript: JSON.stringify(request.data.transcript ?? []),
     draft: JSON.stringify(request.data.draft ?? {}),
-    userProfile: JSON.stringify(request.data.userProfile ?? {})
+    userProfile: JSON.stringify(request.data.userProfile ?? {}),
+    unifiedContext: JSON.stringify(request.data.unifiedContext ?? {})
   });
   const response = await askGeminiJSON(reasoningModel, systemPrompt, prompt, 0.15) as Record<string, unknown>;
   const contextBlob = JSON.stringify({
     transcript: request.data.transcript ?? [],
-    draft: request.data.draft ?? {}
+    draft: request.data.draft ?? {},
+    unifiedContext: unifiedBlob
   });
 
   const decisionBriefRaw = (typeof response.decisionBrief === "object" && response.decisionBrief !== null)

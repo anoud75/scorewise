@@ -109,7 +109,10 @@ struct RootView: View {
             }
         }
         .overlay {
-            if let busyMessage = vm.busyMessage {
+            if let busyMessage = vm.busyMessage,
+               !vm.isGeneratingMatrix,
+               !vm.isRefreshingInsights,
+               !vm.isGeneratingReassurance {
                 VStack {
                     ProgressView(busyMessage)
                         .padding(.horizontal, 14)
@@ -2276,6 +2279,11 @@ private struct RankingWizardView: View {
                             .buttonStyle(.plain)
                             .font(ClarityType.caption.weight(.medium))
                             .foregroundStyle(ClarityPalette.accent)
+
+                            if let citations = vm.activeDraft.clarifyingQuestions.first(where: { $0.id == item.id })?.citations,
+                               !citations.isEmpty {
+                                citationChips(citations)
+                            }
                         }
                     }
                 }
@@ -2443,6 +2451,23 @@ private struct RankingWizardView: View {
                 .font(ClarityType.title)
                 .foregroundStyle(ClarityPalette.inkSoft)
 
+            if vm.isGeneratingMatrix {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .scaleEffect(0.9)
+                    Text("Refreshing matrix suggestions...")
+                        .font(ClarityType.caption)
+                        .foregroundStyle(ClarityPalette.inkSoft)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(ClarityPalette.line, lineWidth: 1)
+                )
+            }
+
             if let summary = vm.aiSuggestionSummary, !summary.isEmpty {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "sparkles")
@@ -2457,6 +2482,39 @@ private struct RankingWizardView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .stroke(ClarityPalette.line, lineWidth: 1)
+                )
+            }
+
+            if vm.matrixQualityFlags.hasWarnings {
+                VStack(alignment: .leading, spacing: 8) {
+                    if vm.matrixQualityFlags.allZeroScores {
+                        Text("AI returned a zeroed score matrix. Review inputs and refresh AI suggestions.")
+                            .font(ClarityType.caption)
+                            .foregroundStyle(ClarityPalette.accent)
+                    }
+                    if vm.matrixQualityFlags.incompleteScores {
+                        Text("AI returned an incomplete score set. Refresh before finalizing.")
+                            .font(ClarityType.caption)
+                            .foregroundStyle(ClarityPalette.accent)
+                    }
+                    if !vm.matrixQualityFlags.lowVarianceCriteria.isEmpty {
+                        Text("Identical scoring detected for: \(vm.matrixQualityFlags.lowVarianceCriteria.prefix(3).joined(separator: ", ")).")
+                            .font(ClarityType.caption)
+                            .foregroundStyle(ClarityPalette.accent)
+                    }
+                    Button("Retry AI scoring") {
+                        vm.applyAISuggestions()
+                    }
+                    .buttonStyle(.plain)
+                    .font(ClarityType.caption.weight(.semibold))
+                    .foregroundStyle(ClarityPalette.ink)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ClarityPalette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(ClarityPalette.accent.opacity(0.25), lineWidth: 1)
                 )
             }
 
@@ -2654,6 +2712,42 @@ private struct RankingWizardView: View {
                                         .foregroundStyle(ClarityPalette.ink)
                                         .fixedSize(horizontal: false, vertical: true)
 
+                                    if !card.quickPickOptions.isEmpty {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Text("Quick pick")
+                                                .font(ClarityType.smallCaps)
+                                                .foregroundStyle(ClarityPalette.inkSoft)
+                                            ForEach(card.quickPickOptions, id: \.self) { option in
+                                                let selected = vm.activeDraft.biasChallenges.first(where: { $0.id == card.id })?.selectedQuickPick == option
+                                                Button {
+                                                    vm.updateBiasChallengeQuickPick(
+                                                        challengeID: card.id,
+                                                        selection: selected ? nil : option
+                                                    )
+                                                } label: {
+                                                    HStack {
+                                                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                                            .foregroundStyle(selected ? ClarityPalette.accent : ClarityPalette.inkSoft)
+                                                        Text(option)
+                                                            .font(ClarityType.caption)
+                                                            .foregroundStyle(ClarityPalette.ink)
+                                                        Spacer()
+                                                    }
+                                                    .padding(.horizontal, 12)
+                                                    .padding(.vertical, 9)
+                                                    .background(
+                                                        selected ? ClarityPalette.accent.opacity(0.10) : ClarityPalette.surfaceSoft,
+                                                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                    )
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                    }
+
+                                    Text("Other details (optional)")
+                                        .font(ClarityType.smallCaps)
+                                        .foregroundStyle(ClarityPalette.inkSoft)
                                     TextEditor(text: Binding(
                                         get: {
                                             vm.activeDraft.biasChallenges.first(where: { $0.id == card.id })?.response ?? ""
@@ -2672,7 +2766,7 @@ private struct RankingWizardView: View {
                             .tag(index)
                     }
                 }
-                .frame(height: 355)
+                .frame(height: 470)
                 .tabViewStyle(.page(indexDisplayMode: .always))
             }
         }
@@ -2705,25 +2799,56 @@ private struct RankingWizardView: View {
                         .stroke(ClarityPalette.line, lineWidth: 1)
                 )
             } else {
-                ProgressView("Generating reassurance...")
-                    .font(ClarityType.body)
-                    .foregroundStyle(ClarityPalette.inkSoft)
-                    .frame(maxWidth: .infinity, minHeight: 220, alignment: .center)
+                Group {
+                    if vm.isGeneratingReassurance {
+                        ProgressView("Generating reassurance...")
+                            .font(ClarityType.body)
+                            .foregroundStyle(ClarityPalette.inkSoft)
+                    } else {
+                        Text("Reassurance is not ready yet. Try again after the challenge responses are saved.")
+                            .font(ClarityType.body)
+                            .foregroundStyle(ClarityPalette.inkSoft)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 220, alignment: .center)
             }
         }
     }
 
     private var analysisStep: some View {
         let winner = previewResult.rankedVendors.first
-        let winnerLabel = winner.map { optionLabel(for: $0.vendorID, fallback: $0.vendorName) } ?? "Top option"
+        let winnerLabel = winner.map { optionLabel(for: $0.vendorID, fallback: $0.vendorName) } ?? "Unknown option (data sync needed)"
         let confidenceText: String = previewResult.confidenceScore >= 0.75 ? "HIGH CONFIDENCE" : "MEDIUM CONFIDENCE"
         let nearTie = leadGap(for: previewResult) < 0.2
         let rawRecommendation = vm.activeDraft.decisionReport?.recommendation
             ?? vm.activeInsight?.winnerReasoning
             ?? winnerLabel
         let recommendation = isGenericAIText(rawRecommendation) ? vm.synthesizedRecommendationText() : rawRecommendation
+        let recommendationCitations = (vm.activeInsight?.citations ?? [])
+            .filter { $0.usedFor == .recommendation }
+        let driverCitations = (vm.activeInsight?.citations ?? [])
+            .filter { $0.usedFor == .criterion }
+        let riskCitations = (vm.activeInsight?.citations ?? [])
+            .filter { $0.usedFor == .risk || $0.usedFor == .bias }
 
         return VStack(alignment: .leading, spacing: 14) {
+            if vm.isRefreshingInsights {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .scaleEffect(0.9)
+                    Text("Refreshing analysis with Clarity AI...")
+                        .font(ClarityType.caption)
+                        .foregroundStyle(ClarityPalette.inkSoft)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(ClarityPalette.line, lineWidth: 1)
+                )
+            }
+
             VStack(alignment: .leading, spacing: 16) {
                 Text("RECOMMENDATION")
                     .font(ClarityType.smallCaps)
@@ -2732,6 +2857,10 @@ private struct RankingWizardView: View {
                 Text(recommendation)
                     .font(ClarityType.sectionSerif)
                     .foregroundStyle(ClarityPalette.ink)
+
+                if !recommendationCitations.isEmpty {
+                    citationChips(recommendationCitations)
+                }
 
                 if nearTie {
                     Text("These options are statistically tied. Use one external validation factor to break the tie.")
@@ -2757,7 +2886,8 @@ private struct RankingWizardView: View {
                         : insightLines(from: vm.activeInsight?.summary, fallback: [
                             "Higher scoring options may trade off flexibility.",
                             "Lower-risk options can limit upside growth."
-                        ])
+                        ]),
+                    citations: driverCitations
                 )
 
                 analysisRow(
@@ -2765,7 +2895,8 @@ private struct RankingWizardView: View {
                     expanded: $showBlindSpots,
                     lines: (vm.activeDraft.decisionReport?.risks.isEmpty == false)
                         ? vm.activeDraft.decisionReport?.risks ?? []
-                        : (vm.activeInsight?.riskFlags ?? ["Weight choices may over-index recent events."])
+                        : (vm.activeInsight?.riskFlags ?? ["Weight choices may over-index recent events."]),
+                    citations: riskCitations
                 )
 
                 analysisRow(
@@ -2778,7 +2909,8 @@ private struct RankingWizardView: View {
                         return insightLines(from: vm.activeInsight?.sensitivityFindings.first, fallback: [
                             "If this result feels wrong instantly, revisit the highest-weight criterion."
                         ])
-                    }()
+                    }(),
+                    citations: []
                 )
 
                 Text("YOUR NEXT STEP")
@@ -2806,7 +2938,7 @@ private struct RankingWizardView: View {
         }
     }
 
-    private func analysisRow(title: String, expanded: Binding<Bool>, lines: [String]) -> some View {
+    private func analysisRow(title: String, expanded: Binding<Bool>, lines: [String], citations: [EvidenceCitation]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
                 withAnimation(.easeInOut(duration: 0.18)) {
@@ -2831,6 +2963,9 @@ private struct RankingWizardView: View {
                             .font(ClarityType.body)
                             .foregroundStyle(ClarityPalette.inkSoft)
                     }
+                    if !citations.isEmpty {
+                        citationChips(citations)
+                    }
                 }
             }
         }
@@ -2842,6 +2977,24 @@ private struct RankingWizardView: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "• ", with: "").replacingOccurrences(of: "- ", with: "") }
             .filter { !$0.isEmpty } ?? []
         return lines.isEmpty ? fallback : lines
+    }
+
+    @ViewBuilder
+    private func citationChips(_ citations: [EvidenceCitation]) -> some View {
+        let labels = Array(Set(citations.map(\.sourceLabel))).sorted()
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(labels, id: \.self) { label in
+                    Text("Source: \(label)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(ClarityPalette.inkSoft)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(ClarityPalette.surfaceSoft, in: Capsule())
+                }
+            }
+            .padding(.vertical, 2)
+        }
     }
 
     private func challengeLabel(for type: BiasChallengeType) -> String {
@@ -3132,6 +3285,7 @@ private struct ResultsView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var exportedURL: URL?
+    @State private var followUpNotesDraft = ""
 
     private var result: RankingResult? {
         vm.activeResult
@@ -3153,7 +3307,7 @@ private struct ResultsView: View {
         return leadGap(for: result) < 0.2
     }
 
-    private var insightBullets: [String] {
+    private var driverLines: [String] {
         if isNearTie {
             return [
                 "The top options are effectively tied in the current scorecard.",
@@ -3171,11 +3325,48 @@ private struct ResultsView: View {
         return Array(source.prefix(3))
     }
 
+    private var summaryHighlights: [String] {
+        var bullets: [String] = []
+
+        if let result, let winner {
+            bullets.append("Scored \(String(format: "%.1f", winner.totalScore))/10, highest among all options")
+            if result.tieDetected || leadGap(for: result) < 0.2 {
+                bullets.append("Near tie: use one external validation step before finalizing.")
+            }
+        }
+
+        if let report = vm.activeDraft.decisionReport {
+            let lowerConfidence = report.confidence.lowercased()
+            if lowerConfidence.contains("low") || lowerConfidence.contains("medium") {
+                bullets.append("Confidence: \(report.confidence)")
+            }
+            if let firstRisk = report.risks.first, firstRisk.trimmed.isNotEmpty {
+                bullets.append(firstRisk)
+            }
+        } else if let firstRisk = vm.activeInsight?.riskFlags.first, firstRisk.trimmed.isNotEmpty {
+            bullets.append(firstRisk)
+        }
+
+        return Array((bullets.isEmpty ? fallbackBullets : bullets).prefix(3))
+    }
+
     private var blindSpotBullets: [String] {
         if let report = vm.activeDraft.decisionReport, !report.risks.isEmpty {
             return Array(report.risks.prefix(3))
         }
         return Array((vm.activeInsight?.riskFlags ?? ["Pressure-test the top-weighted assumption before treating the result as final."]).prefix(3))
+    }
+
+    private var recommendationCitations: [EvidenceCitation] {
+        (vm.activeInsight?.citations ?? []).filter { $0.usedFor == .recommendation }
+    }
+
+    private var driverCitations: [EvidenceCitation] {
+        (vm.activeInsight?.citations ?? []).filter { $0.usedFor == .criterion }
+    }
+
+    private var riskCitations: [EvidenceCitation] {
+        (vm.activeInsight?.citations ?? []).filter { $0.usedFor == .risk || $0.usedFor == .bias }
     }
 
     private var confidenceBullets: [String] {
@@ -3209,6 +3400,16 @@ private struct ResultsView: View {
         )
     }
 
+    private var activeFollowUpCheckpoint: DecisionFollowUpCheckpoint? {
+        vm.activeDraft.followUpCheckpoints
+            .sorted { lhs, rhs in
+                if lhs.completedAt == nil && rhs.completedAt != nil { return true }
+                if lhs.completedAt != nil && rhs.completedAt == nil { return false }
+                return lhs.dueDate < rhs.dueDate
+            }
+            .first
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -3216,9 +3417,51 @@ private struct ResultsView: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 14) {
                     if let result, let winner {
+                        if let status = vm.analysisStatusMessage, status.trimmed.isNotEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: vm.analysisSource == .cloud ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                        .foregroundStyle(vm.analysisSource == .cloud ? ClarityPalette.green : ClarityPalette.accent)
+                                    Text(status)
+                                        .font(ClarityType.caption)
+                                        .foregroundStyle(ClarityPalette.inkSoft)
+                                }
+                                if vm.analysisSource != .cloud {
+                                    Button("Retry Clarity AI analysis") {
+                                        vm.retryAnalysisInsights()
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(ClarityType.caption.weight(.semibold))
+                                    .foregroundStyle(ClarityPalette.accent)
+                                }
+                            }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(ClarityPalette.line, lineWidth: 1)
+                            )
+                        }
+                        if vm.isRefreshingInsights {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Refreshing analysis details...")
+                                    .font(ClarityType.caption)
+                                    .foregroundStyle(ClarityPalette.inkSoft)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(ClarityPalette.line, lineWidth: 1)
+                            )
+                        }
                         summaryCard(result: result, winner: winner)
-                        resultsInsightSection(title: "Drivers", lines: insightBullets)
-                        resultsInsightSection(title: "Risks", lines: blindSpotBullets)
+                        resultsInsightSection(title: "Drivers", lines: driverLines, citations: driverCitations)
+                        resultsInsightSection(title: "Risks", lines: blindSpotBullets, citations: riskCitations)
                         resultsInsightSection(title: "Confidence", lines: confidenceBullets)
 
                         VStack(alignment: .leading, spacing: 10) {
@@ -3236,6 +3479,8 @@ private struct ResultsView: View {
                             RoundedRectangle(cornerRadius: 20, style: .continuous)
                                 .stroke(ClarityPalette.accent.opacity(0.35), lineWidth: 1)
                         )
+
+                        followUpSection
 
                         Button {
                             Task {
@@ -3274,6 +3519,10 @@ private struct ResultsView: View {
         .onAppear {
             vm.saveCurrentProject(modelContext: modelContext)
             vm.loadRecent(modelContext: modelContext)
+            followUpNotesDraft = activeFollowUpCheckpoint?.notes ?? ""
+        }
+        .onChange(of: vm.activeDraft.followUpCheckpoints.map(\.id)) { _, _ in
+            followUpNotesDraft = activeFollowUpCheckpoint?.notes ?? ""
         }
     }
 
@@ -3358,6 +3607,10 @@ private struct ResultsView: View {
                 + Text(recommendation).font(ClarityType.body))
                 .foregroundStyle(ClarityPalette.ink)
 
+            if !recommendationCitations.isEmpty {
+                citationChips(recommendationCitations)
+            }
+
             HStack(spacing: 8) {
                 Text("Confidence:")
                     .font(ClarityType.body)
@@ -3371,9 +3624,7 @@ private struct ResultsView: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                let scoreText = String(format: "%.1f", winner.totalScore)
-                bullet("Your weighted analysis scored \(winnerLabel) at \(scoreText)/10, highest among all options")
-                ForEach(insightBullets, id: \.self) { point in
+                ForEach(summaryHighlights, id: \.self) { point in
                     bullet(point)
                 }
             }
@@ -3416,7 +3667,7 @@ private struct ResultsView: View {
         )
     }
 
-    private func resultsInsightSection(title: String, lines: [String]) -> some View {
+    private func resultsInsightSection(title: String, lines: [String], citations: [EvidenceCitation] = []) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
                 .font(ClarityType.smallCaps)
@@ -3425,6 +3676,9 @@ private struct ResultsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(lines, id: \.self) { line in
                     bullet(line)
+                }
+                if !citations.isEmpty {
+                    citationChips(citations)
                 }
             }
         }
@@ -3446,6 +3700,99 @@ private struct ResultsView: View {
             Text(text)
                 .font(ClarityType.body)
                 .foregroundStyle(ClarityPalette.inkSoft)
+        }
+    }
+
+    @ViewBuilder
+    private func citationChips(_ citations: [EvidenceCitation]) -> some View {
+        let labels = Array(Set(citations.map(\.sourceLabel))).sorted()
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(labels, id: \.self) { label in
+                    Text("Source: \(label)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(ClarityPalette.inkSoft)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(ClarityPalette.surfaceSoft, in: Capsule())
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    @ViewBuilder
+    private var followUpSection: some View {
+        if let checkpoint = activeFollowUpCheckpoint {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Follow-up Checkpoint")
+                    .font(ClarityType.smallCaps)
+                    .foregroundStyle(ClarityPalette.inkSoft)
+
+                Text("\(checkpoint.title) · due \(checkpoint.dueDate.formatted(date: .abbreviated, time: .omitted))")
+                    .font(ClarityType.bodyMedium)
+                    .foregroundStyle(ClarityPalette.ink)
+
+                TextEditor(
+                    text: Binding(
+                        get: {
+                            if followUpNotesDraft.trimmed.isEmpty {
+                                return checkpoint.notes
+                            }
+                            return followUpNotesDraft
+                        },
+                        set: { newValue in
+                            followUpNotesDraft = newValue
+                            vm.updateFollowUpCheckpointNotes(checkpointID: checkpoint.id, notes: newValue)
+                        }
+                    )
+                )
+                .frame(height: 92)
+                .padding(12)
+                .scrollContentBackground(.hidden)
+                .background(ClarityPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                HStack(spacing: 10) {
+                    Button("Generate update") {
+                        vm.generateFollowUpDeltaGuidance(checkpointID: checkpoint.id)
+                    }
+                    .buttonStyle(ClarityPrimaryButtonStyle())
+                    .frame(maxWidth: .infinity)
+
+                    Button("Mark done") {
+                        vm.completeFollowUpCheckpoint(checkpoint.id)
+                    }
+                    .buttonStyle(.plain)
+                    .font(ClarityType.caption.weight(.semibold))
+                    .foregroundStyle(ClarityPalette.inkSoft)
+                }
+
+                if vm.isGeneratingReassurance {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Generating follow-up guidance...")
+                            .font(ClarityType.caption)
+                            .foregroundStyle(ClarityPalette.inkSoft)
+                    }
+                }
+
+                if let guidance = vm.activeDraft.followUpDeltaGuidance?.trimmed, guidance.isNotEmpty {
+                    Text(guidance)
+                        .font(ClarityType.caption)
+                        .foregroundStyle(ClarityPalette.ink)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(ClarityPalette.surfaceSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(ClarityPalette.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(ClarityPalette.line, lineWidth: 1)
+            )
         }
     }
 

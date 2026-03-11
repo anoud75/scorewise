@@ -34,6 +34,22 @@ final class AppViewModel: ObservableObject {
         case postAnalysisChallenge
     }
 
+    enum AnalysisSource: String {
+        case cloud
+        case localFallback = "local_fallback"
+        case unavailable
+    }
+
+    struct MatrixQualityFlags: Equatable {
+        var allZeroScores = false
+        var incompleteScores = false
+        var lowVarianceCriteria: [String] = []
+
+        var hasWarnings: Bool {
+            allZeroScores || incompleteScores || !lowVarianceCriteria.isEmpty
+        }
+    }
+
     @Published var screen: Screen = .launch
     @Published var session: AuthSession?
     @Published var onboardingAnswers: [SurveyAnswer] = []
@@ -57,6 +73,12 @@ final class AppViewModel: ObservableObject {
     @Published var aiSuggestionSummary: String?
     @Published var isApplyingAISuggestions = false
     @Published var optionsValidationMessage: String?
+    @Published var analysisSource: AnalysisSource = .localFallback
+    @Published var analysisStatusMessage: String?
+    @Published var matrixQualityFlags = MatrixQualityFlags()
+    @Published var isRefreshingInsights = false
+    @Published var isGeneratingMatrix = false
+    @Published var isGeneratingReassurance = false
 
     let decisionFlowV2Enabled = true
 
@@ -77,6 +99,10 @@ final class AppViewModel: ObservableObject {
             valuesRanking: userValuesRanking,
             interests: userInterests
         )
+    }
+
+    private var localAIFallbackEnabled: Bool {
+        ProcessInfo.processInfo.environment["SCOREWISE_ENABLE_LOCAL_AI_FALLBACK"] == "1"
     }
 
     init(services: AppServices = .live) {
@@ -268,6 +294,12 @@ final class AppViewModel: ObservableObject {
         activeInsight = nil
         aiSuggestionSummary = nil
         optionsValidationMessage = nil
+        matrixQualityFlags = MatrixQualityFlags()
+        analysisSource = .localFallback
+        analysisStatusMessage = nil
+        isRefreshingInsights = false
+        isGeneratingMatrix = false
+        isGeneratingReassurance = false
         chatMessages.removeAll()
         rankingEntryMode = .manual
         screen = .ranking
@@ -282,11 +314,17 @@ final class AppViewModel: ObservableObject {
         activeInsight = nil
         aiSuggestionSummary = nil
         chatMessages.removeAll()
+        matrixQualityFlags = MatrixQualityFlags()
+        analysisSource = .localFallback
+        analysisStatusMessage = nil
+        isRefreshingInsights = false
+        isGeneratingMatrix = false
+        isGeneratingReassurance = false
         decisionChatMessages = []
         decisionChatPhase = .collecting
         isChatTyping = false
         pendingFreeformReply = ""
-        aiModeLabel = "Offline guidance"
+        aiModeLabel = "Clarity AI"
         matrixSetupReady = false
         rankingEntryMode = .manual
         optionsValidationMessage = nil
@@ -298,12 +336,14 @@ final class AppViewModel: ObservableObject {
         activeDraft.postChallengeReassurance = nil
         activeDraft.constraintFindings = []
         activeDraft.decisionReport = nil
+        activeDraft.unifiedContext = nil
+        activeDraft.followUpCheckpoints = []
+        activeDraft.followUpDeltaGuidance = nil
 
         decisionChatMessages.append(
             DecisionChatMessage(
-                id: UUID().uuidString,
                 role: .assistant,
-                content: "I'm here to help you think through this decision clearly. What's on your mind?",
+                content: "I’m analyzing your situation and will ask targeted decision questions.",
                 options: [],
                 allowSkip: false,
                 allowsFreeformReply: false,
@@ -316,7 +356,6 @@ final class AppViewModel: ObservableObject {
 
         decisionChatMessages.append(
             DecisionChatMessage(
-                id: UUID().uuidString,
                 role: .user,
                 content: trimmed,
                 options: [],
@@ -330,8 +369,9 @@ final class AppViewModel: ObservableObject {
         )
 
         rebuildDecisionConversationSummary()
+        refreshUnifiedDecisionContext()
         screen = .decisionChat
-        queueNextDecisionChatTurn()
+        requestStartDecisionConversation()
     }
 
     func sendFreeformChatReply() {
@@ -341,7 +381,6 @@ final class AppViewModel: ObservableObject {
         pendingFreeformReply = ""
         decisionChatMessages.append(
             DecisionChatMessage(
-                id: UUID().uuidString,
                 role: .user,
                 content: trimmed,
                 options: [],
@@ -355,13 +394,13 @@ final class AppViewModel: ObservableObject {
         )
 
         rebuildDecisionConversationSummary()
-        queueNextDecisionChatTurn()
+        refreshUnifiedDecisionContext()
+        requestContinueDecisionConversation(latestUserResponse: trimmed, selectedOptionIndex: nil)
     }
 
     func selectChatOption(_ option: DecisionChatOption) {
         decisionChatMessages.append(
             DecisionChatMessage(
-                id: UUID().uuidString,
                 role: .user,
                 content: option.text,
                 options: [],
@@ -375,13 +414,13 @@ final class AppViewModel: ObservableObject {
         )
 
         rebuildDecisionConversationSummary()
-        queueNextDecisionChatTurn()
+        refreshUnifiedDecisionContext()
+        requestContinueDecisionConversation(latestUserResponse: option.text, selectedOptionIndex: option.index)
     }
 
     func skipChatQuestion() {
         decisionChatMessages.append(
             DecisionChatMessage(
-                id: UUID().uuidString,
                 role: .user,
                 content: "Skip",
                 options: [],
@@ -394,30 +433,40 @@ final class AppViewModel: ObservableObject {
             )
         )
         rebuildDecisionConversationSummary()
-        queueNextDecisionChatTurn()
+        refreshUnifiedDecisionContext()
+        requestContinueDecisionConversation(latestUserResponse: "Skip", selectedOptionIndex: nil)
     }
 
     func completeChatAndPrepareMatrix() {
-        decisionChatPhase = .completed
-        activeDraft.chatPhase = .completed
-        activeDraft.chatCompletedAt = .now
-        optionsValidationMessage = nil
-        rebuildDecisionConversationSummary()
         Task {
             do {
-                try await refreshDecisionBrief(extractedEvidence: [])
-                activeDraft.chatDerivedOptions = activeDraft.decisionBrief?.detectedOptions ?? []
-                activeDraft.chatDerivedCriteria = activeDraft.decisionBrief?.suggestedCriteria ?? []
+                busyMessage = "Preparing weighted scoring setup..."
+                refreshUnifiedDecisionContext()
+                let setup = try await services.ai.finalizeConversationForMatrix(
+                    projectID: activeDraft.id,
+                    transcript: decisionChatMessages.filter { !$0.isTypingPlaceholder },
+                    draft: activeDraft,
+                    userProfile: userAIProfile
+                )
+                applyMatrixSetupFromConversation(setup)
+                decisionChatPhase = .completed
+                activeDraft.chatPhase = .completed
+                activeDraft.chatCompletedAt = .now
+                optionsValidationMessage = nil
+                rebuildDecisionConversationSummary()
                 activeDraft.constraintFindings = DecisionEngine.shared.detectConstraints(draft: activeDraft)
+                rankingEntryMode = .chatReady
+                trackFlowEvent("flow_entry_mode", details: "chatReady")
+                matrixSetupReady = true
+                aiModeLabel = "Clarity AI"
+                busyMessage = nil
+                screen = .ranking
             } catch {
-                activeDraft.chatDerivedOptions = []
-                activeDraft.chatDerivedCriteria = []
-                activeDraft.constraintFindings = DecisionEngine.shared.detectConstraints(draft: activeDraft)
+                busyMessage = nil
+                aiModeLabel = "AI unavailable"
+                lastError = "Could not finalize matrix setup from Clarity AI. Please retry."
+                appendConversationFailureMessage("I couldn’t finalize your matrix setup from Clarity AI. Please retry.")
             }
-            rankingEntryMode = .chatReady
-            trackFlowEvent("flow_entry_mode", details: "chatReady")
-            matrixSetupReady = true
-            screen = .ranking
         }
     }
 
@@ -462,6 +511,9 @@ final class AppViewModel: ObservableObject {
                 overlookedStrategicPoints: project.aiNextStep.isEmpty ? [] : [project.aiNextStep],
                 sensitivityFindings: []
             )
+            matrixQualityFlags = MatrixQualityFlags()
+            analysisSource = .localFallback
+            analysisStatusMessage = nil
             matrixSetupReady = draft.chatPhase == .completed
             rankingEntryMode = .manual
             optionsValidationMessage = nil
@@ -488,6 +540,7 @@ final class AppViewModel: ObservableObject {
         activeDraft.vendors.append(option)
         optionsValidationMessage = nil
         activeDraft.lastUpdatedAt = .now
+        refreshUnifiedDecisionContext()
         return option.id
     }
 
@@ -497,6 +550,7 @@ final class AppViewModel: ObservableObject {
         activeDraft.vendors[index].notes = notes
         optionsValidationMessage = nil
         activeDraft.lastUpdatedAt = .now
+        refreshUnifiedDecisionContext()
     }
 
     func vendorOption(id: String) -> VendorDraft? {
@@ -514,6 +568,7 @@ final class AppViewModel: ObservableObject {
         activeInsight = nil
         optionsValidationMessage = nil
         activeDraft.lastUpdatedAt = .now
+        refreshUnifiedDecisionContext()
     }
 
     func prepareClarifyingQuestions() {
@@ -522,6 +577,7 @@ final class AppViewModel: ObservableObject {
         Task {
             do {
                 busyMessage = "Preparing clarifying questions..."
+                refreshUnifiedDecisionContext()
                 let allAttachments = activeDraft.contextAttachments + activeDraft.vendors.flatMap(\.attachments)
                 let extractedEvidence = try await services.extractor.extractEvidence(for: allAttachments)
                 applyEvidenceMetadata(extractedEvidence)
@@ -535,13 +591,21 @@ final class AppViewModel: ObservableObject {
                 let normalizedRemote = remoteQuestions
                     .map { ClarifyingQuestionAnswer(question: $0.question.trimmed, answer: $0.answer) }
                     .filter { $0.question.isNotEmpty }
-                let fallbackQuestions = DecisionEngine.shared.generateClarifyingQuestions(draft: activeDraft, userProfile: userAIProfile)
-                let selected = normalizedRemote.count >= 6 ? normalizedRemote : fallbackQuestions
+                let selected: [ClarifyingQuestionAnswer]
+                if normalizedRemote.count >= 6 || !localAIFallbackEnabled {
+                    selected = normalizedRemote
+                } else {
+                    selected = DecisionEngine.shared.generateClarifyingQuestions(draft: activeDraft, userProfile: userAIProfile)
+                }
                 activeDraft.clarifyingQuestions = Array(selected.prefix(12))
                 busyMessage = nil
             } catch {
                 busyMessage = nil
-                activeDraft.clarifyingQuestions = Array(DecisionEngine.shared.generateClarifyingQuestions(draft: activeDraft, userProfile: userAIProfile).prefix(12))
+                if localAIFallbackEnabled {
+                    activeDraft.clarifyingQuestions = Array(DecisionEngine.shared.generateClarifyingQuestions(draft: activeDraft, userProfile: userAIProfile).prefix(12))
+                } else {
+                    lastError = "Could not load clarifying questions from Clarity AI. Please retry."
+                }
             }
         }
     }
@@ -550,6 +614,7 @@ final class AppViewModel: ObservableObject {
         guard let index = activeDraft.clarifyingQuestions.firstIndex(where: { $0.id == questionID }) else { return }
         activeDraft.clarifyingQuestions[index].answer = answer
         activeDraft.lastUpdatedAt = .now
+        refreshUnifiedDecisionContext()
     }
 
     func regenerateClarifyingQuestion(questionID: String) {
@@ -578,15 +643,16 @@ final class AppViewModel: ObservableObject {
                 activeDraft.clarifyingQuestions[index].answer = ""
                 activeDraft.lastUpdatedAt = .now
             } catch {
-                if let deterministic = DecisionEngine.shared
-                    .generateClarifyingQuestions(draft: activeDraft, userProfile: userAIProfile)
-                    .map({ $0.question.trimmed })
-                    .first(where: { $0.caseInsensitiveCompare(rejected) != .orderedSame && !existing.contains($0.lowercased()) }) {
+                if localAIFallbackEnabled,
+                   let deterministic = DecisionEngine.shared
+                   .generateClarifyingQuestions(draft: activeDraft, userProfile: userAIProfile)
+                   .map({ $0.question.trimmed })
+                   .first(where: { $0.caseInsensitiveCompare(rejected) != .orderedSame && !existing.contains($0.lowercased()) }) {
                     activeDraft.clarifyingQuestions[index].question = deterministic
                     activeDraft.clarifyingQuestions[index].answer = ""
                     activeDraft.lastUpdatedAt = .now
                 } else {
-                    lastError = error.localizedDescription
+                    lastError = "Could not refresh this question from Clarity AI. Please retry."
                 }
             }
         }
@@ -598,6 +664,7 @@ final class AppViewModel: ObservableObject {
         Task {
             do {
                 busyMessage = "Generating options..."
+                refreshUnifiedDecisionContext()
                 let allAttachments = activeDraft.contextAttachments + activeDraft.vendors.flatMap(\.attachments)
                 let extractedEvidence = try await services.extractor.extractEvidence(for: allAttachments)
                 applyEvidenceMetadata(extractedEvidence)
@@ -628,21 +695,33 @@ final class AppViewModel: ObservableObject {
         Task {
             do {
                 busyMessage = "Preparing challenge prompts..."
+                refreshUnifiedDecisionContext()
                 let challenges = try await services.ai.generateBiasChallenges(for: activeDraft, preferredOption: optionName, userProfile: userAIProfile)
+                print("📋 BIAS_CHALLENGES: received \(challenges.count) challenges, types: \(challenges.map(\.type.rawValue))")
                 let normalized = Array(challenges.prefix(3)).map { challenge in
                     var compact = challenge
                     let singleSentence = challenge.question
                         .components(separatedBy: .newlines)
                         .joined(separator: " ")
-                        .split(separator: ".")
+                        .split(whereSeparator: { $0 == "." || $0 == "!" || $0 == "?" })
                         .first
                         .map(String.init)?
                         .trimmingCharacters(in: .whitespacesAndNewlines) ?? challenge.question
-                    compact.question = String(singleSentence.prefix(120))
+                    compact.question = String(singleSentence.prefix(100))
+                    compact.quickPickOptions = Array(
+                        challenge.quickPickOptions
+                            .map(\.trimmed)
+                            .filter(\.isNotEmpty)
+                            .prefix(5)
+                    )
+                    if compact.quickPickOptions.isEmpty {
+                        compact.quickPickOptions = defaultQuickPicks(for: challenge.type)
+                    }
                     return compact
                 }
                 if !normalized.isEmpty {
                     activeDraft.biasChallenges = normalized
+                    refreshUnifiedDecisionContext()
                 }
                 busyMessage = nil
             } catch {
@@ -656,6 +735,19 @@ final class AppViewModel: ObservableObject {
         guard let index = activeDraft.biasChallenges.firstIndex(where: { $0.id == challengeID }) else { return }
         activeDraft.biasChallenges[index].response = response
         activeDraft.lastUpdatedAt = .now
+        refreshUnifiedDecisionContext()
+    }
+
+    func updateBiasChallengeQuickPick(challengeID: String, selection: String?) {
+        guard let index = activeDraft.biasChallenges.firstIndex(where: { $0.id == challengeID }) else { return }
+        let normalized = selection?.trimmed
+        if normalized?.isEmpty == true {
+            activeDraft.biasChallenges[index].selectedQuickPick = nil
+        } else {
+            activeDraft.biasChallenges[index].selectedQuickPick = normalized
+        }
+        activeDraft.lastUpdatedAt = .now
+        refreshUnifiedDecisionContext()
     }
 
     func applyAISuggestions() {
@@ -688,7 +780,14 @@ final class AppViewModel: ObservableObject {
                 normalizeWeights()
                 let result = RankingEngine.computeResult(for: activeDraft)
                 activeResult = result
-                activeInsight = try await services.ai.generateInsights(draft: activeDraft, result: result, userProfile: userAIProfile)
+                activeDraft.decisionReport = DecisionEngine.shared.buildDecisionReport(
+                    draft: activeDraft,
+                    result: result,
+                    userProfile: userAIProfile
+                )
+                analysisSource = .localFallback
+                analysisStatusMessage = nil
+                await refreshInsightsFromCloud(for: result, userInitiated: false)
                 busyMessage = nil
             } catch {
                 busyMessage = nil
@@ -705,25 +804,172 @@ final class AppViewModel: ObservableObject {
     func computeResult(navigateToResults: Bool = true) {
         normalizeWeights()
         activeResult = RankingEngine.computeResult(for: activeDraft)
-        if let result = activeResult {
-            activeDraft.decisionReport = DecisionEngine.shared.buildDecisionReport(
-                draft: activeDraft,
-                result: result,
-                userProfile: userAIProfile
-            )
-        }
-
-        Task {
-            do {
-                activeInsight = try await services.ai.generateInsights(draft: activeDraft, result: activeResult!, userProfile: userAIProfile)
-            } catch {
-                lastError = error.localizedDescription
-            }
-        }
+        guard let result = activeResult else { return }
+        let fallbackReport = DecisionEngine.shared.buildDecisionReport(
+            draft: activeDraft,
+            result: result,
+            userProfile: userAIProfile
+        )
+        activeDraft.decisionReport = fallbackReport
+        analysisSource = .localFallback
+        analysisStatusMessage = nil
+        refreshUnifiedDecisionContext()
 
         if navigateToResults {
             screen = .results
         }
+
+        Task {
+            await refreshInsightsFromCloud(for: result, userInitiated: false)
+        }
+    }
+
+    func retryAnalysisInsights() {
+        guard let result = activeResult else { return }
+        Task {
+            await refreshInsightsFromCloud(for: result, userInitiated: true)
+        }
+    }
+
+    private func refreshInsightsFromCloud(for result: RankingResult, userInitiated: Bool) async {
+        isRefreshingInsights = true
+        if !userInitiated {
+            analysisStatusMessage = "Refreshing analysis with Clarity AI..."
+        }
+        if userInitiated {
+            busyMessage = "Refreshing Clarity AI analysis..."
+        }
+
+        defer {
+            if userInitiated {
+                busyMessage = nil
+            }
+        }
+
+        do {
+            refreshUnifiedDecisionContext()
+            let insight = try await services.ai.generateInsights(draft: activeDraft, result: result, userProfile: userAIProfile)
+            activeInsight = insight
+            activeDraft.decisionReport = buildDecisionReport(
+                from: insight,
+                result: result,
+                fallback: activeDraft.decisionReport
+            )
+            refreshUnifiedDecisionContext()
+            analysisSource = .cloud
+            analysisStatusMessage = nil
+        } catch {
+            print("⚠️ INSIGHTS_FALLBACK: \(error.localizedDescription)")
+            if activeDraft.decisionReport == nil {
+                analysisSource = .unavailable
+                analysisStatusMessage = "Clarity AI analysis is unavailable right now. Retry when your connection is stable."
+                if userInitiated {
+                    lastError = "Could not refresh Clarity AI analysis. Please retry."
+                }
+            } else {
+                analysisSource = .localFallback
+                analysisStatusMessage = "Showing local analysis while Clarity AI is unavailable. You can retry."
+            }
+        }
+        isRefreshingInsights = false
+    }
+
+    private func buildDecisionReport(from insight: InsightReportDraft, result: RankingResult, fallback: DecisionReport?) -> DecisionReport {
+        let fallbackReport = fallback ?? DecisionEngine.shared.buildDecisionReport(
+            draft: activeDraft,
+            result: result,
+            userProfile: userAIProfile
+        )
+
+        let recommendation = insight.winnerReasoning.trimmed.isNotEmpty
+            ? insight.winnerReasoning.trimmed
+            : fallbackReport.recommendation
+        let drivers = {
+            let parsed = parseDriversFromInsight(insight)
+            return parsed.isEmpty ? fallbackReport.drivers : parsed
+        }()
+        let risks = insight.riskFlags.filter { $0.trimmed.isNotEmpty }.isEmpty
+            ? fallbackReport.risks
+            : insight.riskFlags.filter { $0.trimmed.isNotEmpty }
+        let nextStep = {
+            if let value = insight.nextStep?.trimmed, value.isNotEmpty { return value }
+            if let value = insight.overlookedStrategicPoints.first?.trimmed, value.isNotEmpty { return value }
+            return fallbackReport.nextStep
+        }()
+        let biasChecks = insight.sensitivityFindings.filter { $0.trimmed.isNotEmpty }.isEmpty
+            ? fallbackReport.biasChecks
+            : insight.sensitivityFindings.filter { $0.trimmed.isNotEmpty }
+
+        return DecisionReport(
+            recommendation: recommendation,
+            drivers: drivers,
+            risks: risks,
+            confidence: inferConfidenceLabel(from: insight, result: result),
+            nextStep: nextStep,
+            biasChecks: biasChecks
+        )
+    }
+
+    private func parseDriversFromInsight(_ insight: InsightReportDraft) -> [String] {
+        if let drivers = insight.drivers?.map(\.trimmed).filter(\.isNotEmpty), !drivers.isEmpty {
+            return Array(drivers.prefix(3))
+        }
+
+        let summaryLines = insight.summary
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map { line in
+                line
+                    .replacingOccurrences(of: "• ", with: "")
+                    .replacingOccurrences(of: "- ", with: "")
+                    .trimmed
+            }
+            .filter { line in
+                line.isNotEmpty &&
+                    !line.lowercased().hasPrefix("decision summary") &&
+                    !line.lowercased().hasPrefix("recommendation")
+            }
+
+        if !summaryLines.isEmpty {
+            return Array(summaryLines.prefix(3))
+        }
+
+        guard let winner = activeResult?.rankedVendors.first,
+              let runnerUp = activeResult?.rankedVendors.dropFirst().first else {
+            return []
+        }
+        let winnerLabel = resolvedOptionLabel(vendorID: winner.vendorID, fallback: winner.vendorName)
+        let runnerLabel = resolvedOptionLabel(vendorID: runnerUp.vendorID, fallback: runnerUp.vendorName)
+        let criteria = activeDraft.criteria.sorted { $0.weightPercent > $1.weightPercent }.prefix(3)
+        return criteria.map { criterion in
+            let winnerScore = activeDraft.scores.first(where: { $0.vendorID == winner.vendorID && $0.criterionID == criterion.id })?.score ?? 0
+            let runnerScore = activeDraft.scores.first(where: { $0.vendorID == runnerUp.vendorID && $0.criterionID == criterion.id })?.score ?? 0
+            return "\(criterion.name): \(winnerLabel) \(String(format: "%.1f", winnerScore)) vs \(runnerLabel) \(String(format: "%.1f", runnerScore)) (\(Int(criterion.weightPercent.rounded()))% weight)."
+        }
+    }
+
+    private func inferConfidenceLabel(from insight: InsightReportDraft, result: RankingResult) -> String {
+        if let explicit = insight.confidenceLabel?.trimmed, explicit.isNotEmpty {
+            return explicit
+        }
+
+        let signalText = (
+            insight.sensitivityFindings +
+            insight.riskFlags +
+            [insight.summary]
+        )
+            .joined(separator: " ")
+            .lowercased()
+
+        if signalText.contains("low confidence") || signalText.contains("confidence is low") || result.tieDetected || result.confidenceScore < 0.45 {
+            return "Low — the lead is sensitive to assumption changes."
+        }
+
+        if signalText.contains("high confidence") || signalText.contains("strong evidence") || result.confidenceScore >= 0.78 {
+            return "High — the lead remains stable across key criteria."
+        }
+
+        return "Medium — the current winner is plausible but still needs one targeted validation."
     }
 
     func saveCurrentProject(modelContext: ModelContext) {
@@ -768,6 +1014,12 @@ final class AppViewModel: ObservableObject {
             rankingEntryMode = .manual
             optionsValidationMessage = nil
             isApplyingAISuggestions = false
+            matrixQualityFlags = MatrixQualityFlags()
+            analysisSource = .localFallback
+            analysisStatusMessage = nil
+            isRefreshingInsights = false
+            isGeneratingMatrix = false
+            isGeneratingReassurance = false
             recentProjects = []
             userValuesRanking = []
             userInterests = []
@@ -780,7 +1032,13 @@ final class AppViewModel: ObservableObject {
     func setDecisionOutcome(decided: Bool) {
         activeDraft.decisionStatus = decided ? .decided : .pending
         activeDraft.chosenOptionID = decided ? activeResult?.winnerID : nil
+        if decided {
+            ensureFollowUpCheckpoints()
+        } else {
+            activeDraft.followUpDeltaGuidance = nil
+        }
         activeDraft.lastUpdatedAt = .now
+        refreshUnifiedDecisionContext()
         syncFollowUpNotification()
     }
 
@@ -797,22 +1055,38 @@ final class AppViewModel: ObservableObject {
         let winner = activeResult?.rankedVendors.first?.vendorName ?? activeDraft.vendors.first?.name ?? "the leading option"
         let confidence = activeResult?.confidenceScore ?? 0
         let responses = activeDraft.biasChallenges.map { challenge in
-            let answer = challenge.response.trimmed.isEmpty ? "Skipped" : challenge.response.trimmed
+            let quickPick = challenge.selectedQuickPick?.trimmed
+            let typed = challenge.response.trimmed
+            let answer: String
+            if quickPick?.isNotEmpty == true && typed.isNotEmpty {
+                answer = "Quick pick: \(quickPick!). Notes: \(typed)"
+            } else if quickPick?.isNotEmpty == true {
+                answer = "Quick pick: \(quickPick!)"
+            } else if typed.isNotEmpty {
+                answer = typed
+            } else {
+                answer = "Skipped"
+            }
             return "\(challenge.question)\nAnswer: \(answer)"
         }.joined(separator: "\n\n")
         let prompt = """
-        Reassure me using my challenge-check responses.
+        Build post-challenge reassurance using the full decision context.
         Current leading option: \(winner)
         Confidence score: \(String(format: "%.2f", confidence))
         Challenge responses:
         \(responses)
-
-        Give a calm recommendation with practical next steps and what uncertainty still remains.
+        Return sections exactly:
+        Reassurance now
+        Why this still holds
+        What could invalidate it
+        Concrete next action in 48 hours
         """
 
         Task {
             do {
                 busyMessage = "Preparing reassurance..."
+                isGeneratingReassurance = true
+                refreshUnifiedDecisionContext()
                 let reply = try await services.ai.decisionChat(
                     projectID: activeDraft.id,
                     phase: "post_challenge_reassurance",
@@ -822,12 +1096,16 @@ final class AppViewModel: ObservableObject {
                 )
                 activeDraft.postChallengeReassurance = reply.content.trimmed
                 activeDraft.lastUpdatedAt = .now
+                refreshUnifiedDecisionContext()
                 trackFlowEvent("challenge_reassurance_generated")
+                isGeneratingReassurance = false
                 busyMessage = nil
             } catch {
+                isGeneratingReassurance = false
                 busyMessage = nil
                 lastError = error.localizedDescription
                 activeDraft.postChallengeReassurance = "You are doing the right thing by pressure-testing this choice. Keep the top recommendation, validate one key assumption this week, and decide after that check."
+                refreshUnifiedDecisionContext()
             }
         }
     }
@@ -847,6 +1125,7 @@ final class AppViewModel: ObservableObject {
         mergeSuggestedOptions(explicitOptions)
         activeDraft.constraintFindings = DecisionEngine.shared.detectConstraints(draft: activeDraft)
         activeDraft.clarifyingQuestions = Array(DecisionEngine.shared.generateClarifyingQuestions(draft: activeDraft, userProfile: userAIProfile).prefix(12))
+        refreshUnifiedDecisionContext()
         trackFlowEvent("flow_step_transition", details: "describe_to_clarify")
         return .clarify
     }
@@ -877,14 +1156,74 @@ final class AppViewModel: ObservableObject {
     }
 
     func setFollowUpReminder(enabled: Bool) {
-        activeDraft.followUpDate = enabled ? Calendar.current.date(byAdding: .day, value: 30, to: .now) : nil
+        if enabled {
+            ensureFollowUpCheckpoints()
+        } else {
+            activeDraft.followUpDate = nil
+            activeDraft.followUpCheckpoints = []
+        }
         activeDraft.lastUpdatedAt = .now
+        refreshUnifiedDecisionContext()
         syncFollowUpNotification()
+    }
+
+    func updateFollowUpCheckpointNotes(checkpointID: String, notes: String) {
+        guard let index = activeDraft.followUpCheckpoints.firstIndex(where: { $0.id == checkpointID }) else { return }
+        activeDraft.followUpCheckpoints[index].notes = notes
+        activeDraft.lastUpdatedAt = .now
+        refreshUnifiedDecisionContext()
+    }
+
+    func completeFollowUpCheckpoint(_ checkpointID: String) {
+        guard let index = activeDraft.followUpCheckpoints.firstIndex(where: { $0.id == checkpointID }) else { return }
+        activeDraft.followUpCheckpoints[index].completedAt = .now
+        activeDraft.lastUpdatedAt = .now
+        refreshUnifiedDecisionContext()
+    }
+
+    func generateFollowUpDeltaGuidance(checkpointID: String) {
+        guard let checkpoint = activeDraft.followUpCheckpoints.first(where: { $0.id == checkpointID }) else { return }
+        let winnerLabel = activeResult?.rankedVendors.first.map { resolvedOptionLabel(vendorID: $0.vendorID, fallback: $0.vendorName) } ?? "the current leading option"
+        let prompt = """
+        Provide a follow-up delta recommendation.
+        Current winner: \(winnerLabel)
+        Checkpoint: \(checkpoint.title)
+        What changed:
+        \(checkpoint.notes.trimmed.isEmpty ? "No updates provided yet." : checkpoint.notes.trimmed)
+
+        Return concise sections:
+        Recommendation update
+        What changed materially
+        Risk now
+        Next action this week
+        """
+
+        Task {
+            do {
+                isGeneratingReassurance = true
+                refreshUnifiedDecisionContext()
+                let response = try await services.ai.decisionChat(
+                    projectID: activeDraft.id,
+                    phase: "follow_up_delta",
+                    message: prompt,
+                    draft: activeDraft,
+                    userProfile: userAIProfile
+                )
+                activeDraft.followUpDeltaGuidance = response.content.trimmed
+                activeDraft.lastUpdatedAt = .now
+                isGeneratingReassurance = false
+            } catch {
+                isGeneratingReassurance = false
+                lastError = error.localizedDescription
+                activeDraft.followUpDeltaGuidance = "No strong change signal yet. Re-check your top weighted criterion with one fresh external input this week."
+            }
+        }
     }
 
     func updateAlternativePathAnswer(_ answer: String) {
         activeDraft.alternativePathAnswer = answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : answer.trimmingCharacters(in: .whitespacesAndNewlines)
         activeDraft.lastUpdatedAt = .now
+        refreshUnifiedDecisionContext()
     }
 
     func exportPDF() async -> URL? {
@@ -900,6 +1239,7 @@ final class AppViewModel: ObservableObject {
     func askChat(_ prompt: String, phase: String) {
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         chatMessages.append(ChatMessageDraft(role: "user", content: prompt))
+        refreshUnifiedDecisionContext()
 
         Task {
             do {
@@ -927,7 +1267,11 @@ final class AppViewModel: ObservableObject {
         if busyMessage == nil {
             busyMessage = "Generating AI suggestions..."
         }
+        isGeneratingMatrix = true
+        defer { isGeneratingMatrix = false }
+        matrixQualityFlags = MatrixQualityFlags()
         activeDraft.decisionReport = nil
+        refreshUnifiedDecisionContext()
         let allAttachments = activeDraft.contextAttachments + activeDraft.vendors.flatMap(\.attachments)
         let extractedEvidence = try await services.extractor.extractEvidence(for: allAttachments)
         applyEvidenceMetadata(extractedEvidence)
@@ -939,17 +1283,37 @@ final class AppViewModel: ObservableObject {
             extractedEvidence: extractedEvidence.map(\.extractedText).filter { !$0.isEmpty },
             userProfile: userAIProfile
         )
+        print("📊 SCORING: received \(suggestion.draftScores.count) scores, \(suggestion.criteria.count) criteria")
+        var qualityFlags = MatrixQualityFlags()
+        if !suggestion.draftScores.isEmpty && suggestion.draftScores.allSatisfy({ $0.score == 0 }) {
+            qualityFlags.allZeroScores = true
+            print("⚠️ SCORING: All scores are 0 — likely fallback/mock payload or invalid matrix draft")
+        }
         activeDraft.criteria = RankingEngine.normalizedCriteria(suggestion.criteria)
         if activeDraft.criteria.isEmpty {
-            let deterministic = DecisionEngine.shared.buildSuggestedInputs(
-                draft: activeDraft,
-                context: activeDraft.usageContext,
-                extractedEvidence: extractedEvidence.map(\.extractedText).filter { !$0.isEmpty },
-                userProfile: userAIProfile
-            )
-            activeDraft.criteria = deterministic.criteria
+            if localAIFallbackEnabled {
+                let deterministic = DecisionEngine.shared.buildSuggestedInputs(
+                    draft: activeDraft,
+                    context: activeDraft.usageContext,
+                    extractedEvidence: extractedEvidence.map(\.extractedText).filter { !$0.isEmpty },
+                    userProfile: userAIProfile
+                )
+                activeDraft.criteria = deterministic.criteria
+            } else {
+                throw ScoreWiseServiceError.featureUnavailable("Clarity AI returned no criteria for this matrix. Please retry.")
+            }
         }
         activeDraft.scores.removeAll()
+        let expectedScoreCount = activeDraft.vendors.count * activeDraft.criteria.count
+        qualityFlags.incompleteScores = suggestion.draftScores.count < expectedScoreCount
+
+        if !localAIFallbackEnabled && (qualityFlags.allZeroScores || qualityFlags.incompleteScores) {
+            let reason = qualityFlags.allZeroScores
+                ? "Clarity AI returned a zeroed score matrix. Please refresh AI suggestions."
+                : "Clarity AI returned incomplete matrix scores. Please refresh AI suggestions."
+            matrixQualityFlags = qualityFlags
+            throw ScoreWiseServiceError.featureUnavailable(reason)
+        }
 
         for score in suggestion.draftScores {
             if score.confidence < 0.60 {
@@ -962,14 +1326,20 @@ final class AppViewModel: ObservableObject {
         }
 
         let constraints = activeDraft.constraintFindings ?? []
-        let fallbackScores = DecisionEngine.shared.matrixBuilder.buildScores(
-            draft: activeDraft,
-            criteria: activeDraft.criteria,
-            constraints: constraints,
-            autoScoringEngine: DecisionEngine.shared.autoScoringEngine
-        )
-        for score in fallbackScores where !activeDraft.scores.contains(where: { $0.vendorID == score.vendorID && $0.criterionID == score.criterionID }) {
-            upsertScore(score)
+        if activeDraft.scores.count < expectedScoreCount {
+            if localAIFallbackEnabled {
+                let fallbackScores = DecisionEngine.shared.matrixBuilder.buildScores(
+                    draft: activeDraft,
+                    criteria: activeDraft.criteria,
+                    constraints: constraints,
+                    autoScoringEngine: DecisionEngine.shared.autoScoringEngine
+                )
+                for score in fallbackScores where !activeDraft.scores.contains(where: { $0.vendorID == score.vendorID && $0.criterionID == score.criterionID }) {
+                    upsertScore(score)
+                }
+            } else {
+                throw ScoreWiseServiceError.featureUnavailable("Clarity AI returned incomplete matrix scores. Please refresh AI suggestions.")
+            }
         }
 
         if constraints.contains(where: { !$0.violatedOptionIDs.isEmpty }) {
@@ -984,6 +1354,29 @@ final class AppViewModel: ObservableObject {
                 }
             }
         }
+
+        qualityFlags.incompleteScores = activeDraft.scores.count < expectedScoreCount
+        qualityFlags.allZeroScores = !activeDraft.scores.isEmpty && activeDraft.scores.allSatisfy { $0.score == 0 }
+
+        var lowVarianceCriteria: [String] = []
+        for criterion in activeDraft.criteria {
+            let scoreIndexes = activeDraft.scores.indices.filter { activeDraft.scores[$0].criterionID == criterion.id }
+            guard scoreIndexes.count >= 2 else { continue }
+            let uniqueScores = Set(scoreIndexes.map { Int((activeDraft.scores[$0].score * 10).rounded()) })
+            if uniqueScores.count <= 1 {
+                lowVarianceCriteria.append(criterion.name)
+                for index in scoreIndexes {
+                    let warning = "⚠️ Scores appear identical — review and adjust based on your knowledge."
+                    if !activeDraft.scores[index].evidenceSnippet.contains("⚠️ Scores appear identical") {
+                        let trimmedEvidence = activeDraft.scores[index].evidenceSnippet.trimmed
+                        activeDraft.scores[index].evidenceSnippet = trimmedEvidence.isEmpty ? warning : "\(warning) \(trimmedEvidence)"
+                    }
+                    activeDraft.scores[index].confidence = min(activeDraft.scores[index].confidence, 0.30)
+                }
+            }
+        }
+        qualityFlags.lowVarianceCriteria = lowVarianceCriteria
+        matrixQualityFlags = qualityFlags
 
         let readyEvidenceCount = extractedEvidence.filter { $0.status == .ready && !$0.extractedText.isEmpty }.count
         let optionNames = activeDraft.vendors
@@ -1000,7 +1393,24 @@ final class AppViewModel: ObservableObject {
         let confidenceSuffix = lowConfidenceCount == 0
             ? " Draft scores are mostly high-confidence."
             : " \(lowConfidenceCount) score suggestion\(lowConfidenceCount == 1 ? "" : "s") need extra review."
-        aiSuggestionSummary = "AI reviewed \(readyEvidenceCount) source\(readyEvidenceCount == 1 ? "" : "s"), built \(activeDraft.criteria.count) criteria for \(optionNames.isEmpty ? "your current options" : optionNames), and weighted \(topCriteria.isEmpty ? "the strongest factors it found" : topCriteria) most heavily.\(confidenceSuffix)"
+        let qualitySuffix: String
+        if qualityFlags.hasWarnings {
+            var warnings: [String] = []
+            if qualityFlags.allZeroScores {
+                warnings.append("all scores returned as zero")
+            }
+            if qualityFlags.incompleteScores {
+                warnings.append("matrix is incomplete")
+            }
+            if !qualityFlags.lowVarianceCriteria.isEmpty {
+                warnings.append("identical scoring on \(qualityFlags.lowVarianceCriteria.prefix(2).joined(separator: ", "))")
+            }
+            qualitySuffix = " Quality flags: \(warnings.joined(separator: "; "))."
+        } else {
+            qualitySuffix = ""
+        }
+        aiSuggestionSummary = "AI reviewed \(readyEvidenceCount) source\(readyEvidenceCount == 1 ? "" : "s"), built \(activeDraft.criteria.count) criteria for \(optionNames.isEmpty ? "your current options" : optionNames), and weighted \(topCriteria.isEmpty ? "the strongest factors it found" : topCriteria) most heavily.\(confidenceSuffix)\(qualitySuffix)"
+        refreshUnifiedDecisionContext()
     }
 
     private func refreshDecisionBrief(extractedEvidence: [String]) async throws {
@@ -1016,6 +1426,7 @@ final class AppViewModel: ObservableObject {
         if shouldApplyBriefCriteria {
             activeDraft.criteria = RankingEngine.normalizedCriteria(brief.suggestedCriteria)
         }
+        refreshUnifiedDecisionContext()
     }
 
     private func mergeSuggestedOptions(_ options: [DecisionOptionSnapshot]) {
@@ -1117,6 +1528,95 @@ final class AppViewModel: ObservableObject {
         activeDraft.lastUpdatedAt = .now
     }
 
+    private func buildUnifiedDecisionContext() -> UnifiedDecisionContext {
+        let transcriptLines = decisionChatMessages
+            .filter { !$0.isTypingPlaceholder && $0.content.trimmed.isNotEmpty }
+            .map { message in
+                let role = message.role == .assistant ? "Clarity" : "User"
+                return "\(role): \(message.content.trimmed)"
+            }
+
+        let options = activeDraft.vendors
+            .map { vendor in
+                DecisionOptionSnapshot(
+                    id: vendor.id,
+                    label: vendor.name.trimmed,
+                    type: .genericChoice,
+                    description: vendor.notes.trimmed.isNotEmpty ? vendor.notes.trimmed : nil,
+                    aiSuggested: false
+                )
+            }
+            .filter(\.isExplicitNamed)
+
+        let allAttachments = activeDraft.contextAttachments + activeDraft.vendors.flatMap(\.attachments)
+        let attachmentEvidence = allAttachments.compactMap { attachment -> String? in
+            let message = attachment.validationMessage.trimmed
+            guard message.isNotEmpty else { return nil }
+            let title = attachment.titleHint.nonEmpty ?? attachment.fileName
+            return "\(title): \(message)"
+        }
+        let attachmentsSummary = allAttachments.compactMap { attachment -> String? in
+            let title = attachment.titleHint.nonEmpty ?? attachment.fileName
+            let host = attachment.sourceHost.nonEmpty
+            let status = attachment.status.displayName
+            let trust = attachment.trustLevel.displayName
+            if let host {
+                return "\(title) (\(host)) - \(status), \(trust)"
+            }
+            return "\(title) - \(status), \(trust)"
+        }
+
+        let challengeResponsesSummary = activeDraft.biasChallenges.map { challenge in
+            let quickPick = challenge.selectedQuickPick?.trimmed
+            let typed = challenge.response.trimmed
+            let detail: String
+            if quickPick?.isNotEmpty == true && typed.isNotEmpty {
+                detail = "Quick pick: \(quickPick!). Notes: \(typed)"
+            } else if quickPick?.isNotEmpty == true {
+                detail = "Quick pick: \(quickPick!)"
+            } else if typed.isNotEmpty {
+                detail = "Notes: \(typed)"
+            } else {
+                detail = "No answer"
+            }
+            return "\(challenge.question) -> \(detail)"
+        }
+
+        let clarifyingCitations = activeDraft.clarifyingQuestions
+            .compactMap(\.citations)
+            .flatMap { $0 }
+        let insightCitations = activeInsight?.citations ?? []
+        let citationSet = Set((clarifyingCitations + insightCitations).map { "\($0.cardId)|\($0.sourceLabel)|\($0.usedFor.rawValue)" })
+        let mergedCitations = citationSet.compactMap { key -> EvidenceCitation? in
+            let pieces = key.components(separatedBy: "|")
+            guard pieces.count == 3 else { return nil }
+            return EvidenceCitation(
+                cardId: pieces[0],
+                sourceLabel: pieces[1],
+                usedFor: EvidenceCitationUsage(rawValue: pieces[2]) ?? .recommendation
+            )
+        }
+
+        return UnifiedDecisionContext(
+            decisionNarrative: activeDraft.contextNarrative.trimmed,
+            conversationTranscript: transcriptLines,
+            clarifyingAnswers: activeDraft.clarifyingQuestions,
+            options: options,
+            constraints: activeDraft.constraintFindings ?? [],
+            criteria: activeDraft.criteria,
+            scores: activeDraft.scores,
+            biasChallenges: activeDraft.biasChallenges,
+            attachmentEvidence: attachmentEvidence,
+            challengeResponsesSummary: challengeResponsesSummary,
+            attachmentsSummary: attachmentsSummary,
+            knowledgeCitations: mergedCitations
+        )
+    }
+
+    private func refreshUnifiedDecisionContext() {
+        activeDraft.unifiedContext = buildUnifiedDecisionContext()
+    }
+
     private func hydrateOnboardingState(from profile: UserProfileEntity) {
         onboardingAnswers = (try? JSONDecoder().decode([SurveyAnswer].self, from: Data(profile.surveyAnswersJSON.utf8))) ?? []
         userValuesRanking = (try? JSONDecoder().decode([String].self, from: Data(profile.valuesRankingJSON.utf8))) ?? []
@@ -1127,7 +1627,7 @@ final class AppViewModel: ObservableObject {
 
     private func syncFollowUpNotification() {
         Task {
-            if activeDraft.followUpDate == nil {
+            if activeDraft.followUpDate == nil && activeDraft.followUpCheckpoints.isEmpty {
                 await services.notifications.cancelFollowUp(for: activeDraft.id)
                 return
             }
@@ -1137,6 +1637,50 @@ final class AppViewModel: ObservableObject {
             } catch {
                 lastError = error.localizedDescription
             }
+        }
+    }
+
+    private func ensureFollowUpCheckpoints() {
+        let now = Date()
+        let day7 = Calendar.current.date(byAdding: .day, value: 7, to: now)
+        let day30 = Calendar.current.date(byAdding: .day, value: 30, to: now)
+        var checkpoints: [DecisionFollowUpCheckpoint] = []
+        checkpoints.append(
+            DecisionFollowUpCheckpoint(
+                title: "7-day check-in",
+                dueDate: day7 ?? now,
+                completedAt: nil,
+                notes: ""
+            )
+        )
+        checkpoints.append(
+            DecisionFollowUpCheckpoint(
+                title: "30-day check-in",
+                dueDate: day30 ?? now,
+                completedAt: nil,
+                notes: ""
+            )
+        )
+        activeDraft.followUpCheckpoints = checkpoints
+        activeDraft.followUpDate = checkpoints.last?.dueDate
+    }
+
+    private func defaultQuickPicks(for type: BiasChallengeType) -> [String] {
+        switch type {
+        case .friendTest:
+            return ["Can justify clearly", "Need stronger case", "Still undecided"]
+        case .preMortem:
+            return ["Main risk is execution", "Main risk is fit", "Risk feels manageable"]
+        case .inversion:
+            return ["Would regret skipping alternative", "Would regret changing now", "Regret risk is balanced"]
+        case .worstCase:
+            return ["Backup plan exists", "Backup plan is weak", "Worst-case is unacceptable"]
+        case .tenTenTen:
+            return ["Still right long-term", "Only feels right now", "Need long-term proof"]
+        case .inactionCost:
+            return ["Delay is costly", "Delay cost is moderate", "Delay cost is low"]
+        case .valuesCheck:
+            return ["Aligned with top value", "Partially aligned", "Feels safe but misaligned"]
         }
     }
 
@@ -1187,7 +1731,7 @@ final class AppViewModel: ObservableObject {
            !isGenericOptionLabel(resultName) {
             return resultName
         }
-        return "Top option"
+        return "Unknown option (data sync needed)"
     }
 
     func synthesizedRecommendationText() -> String {
@@ -1293,17 +1837,9 @@ final class AppViewModel: ObservableObject {
         activeDraft.conversationSummary = lines.joined(separator: "\n")
     }
 
-    private func queueNextDecisionChatTurn() {
-        guard !isChatTyping else { return }
-
-        if let last = decisionChatMessages.last, last.cta != nil {
-            return
-        }
-
-        let nextMessage = nextDecisionChatMessage()
+    private func appendTypingPlaceholder() {
         decisionChatMessages.append(
             DecisionChatMessage(
-                id: UUID().uuidString,
                 role: .assistant,
                 content: "",
                 options: [],
@@ -1315,196 +1851,154 @@ final class AppViewModel: ObservableObject {
                 isTypingPlaceholder: true
             )
         )
-        isChatTyping = true
+    }
 
-        Task {
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            guard !Task.isCancelled else { return }
-            if let index = decisionChatMessages.firstIndex(where: \.isTypingPlaceholder) {
-                decisionChatMessages.remove(at: index)
-            }
-            decisionChatMessages.append(nextMessage)
-            isChatTyping = false
+    private func removeTypingPlaceholder() {
+        if let index = decisionChatMessages.firstIndex(where: \.isTypingPlaceholder) {
+            decisionChatMessages.remove(at: index)
         }
     }
 
-    private func nextDecisionChatMessage() -> DecisionChatMessage {
-        let turns = decisionChatTurnSeeds()
+    private func askedFrameworkQuestionCount() -> Int {
+        decisionChatMessages.filter { !$0.isTypingPlaceholder && $0.role == .assistant && $0.framework != nil }.count
+    }
 
-        if activeDraft.frameworksUsed.count >= turns.count {
-            decisionChatPhase = .transitionReady
-            activeDraft.chatPhase = .transitionReady
-            return DecisionChatMessage(
-                id: UUID().uuidString,
+    private func forceChatTransition(message: String = "I have enough context. Let's set up your comparison.") {
+        removeTypingPlaceholder()
+        decisionChatPhase = .transitionReady
+        activeDraft.chatPhase = .transitionReady
+        if decisionChatMessages.last?.cta == nil {
+            decisionChatMessages.append(
+                DecisionChatMessage(
+                    role: .assistant,
+                    content: message,
+                    options: [],
+                    allowSkip: false,
+                    allowsFreeformReply: false,
+                    cta: ChatMessageCTA(title: "Set Up Your Options", action: .setupOptions),
+                    framework: nil,
+                    createdAt: .now,
+                    isTypingPlaceholder: false
+                )
+            )
+        }
+        isChatTyping = false
+        refreshUnifiedDecisionContext()
+    }
+
+    private func requestStartDecisionConversation() {
+        guard !isChatTyping else { return }
+        refreshUnifiedDecisionContext()
+        isChatTyping = true
+        appendTypingPlaceholder()
+
+        Task {
+            do {
+                let response = try await services.ai.startDecisionConversation(
+                    projectID: activeDraft.id,
+                    contextNarrative: activeDraft.contextNarrative,
+                    usageContext: activeDraft.usageContext,
+                    userProfile: userAIProfile
+                )
+                removeTypingPlaceholder()
+                applyConversationResponse(response)
+                aiModeLabel = "Clarity AI"
+                isChatTyping = false
+            } catch {
+                removeTypingPlaceholder()
+                aiModeLabel = "AI unavailable"
+                appendConversationFailureMessage("I couldn’t start Clarity AI right now. Please retry.")
+                isChatTyping = false
+            }
+        }
+    }
+
+    private func requestContinueDecisionConversation(latestUserResponse: String, selectedOptionIndex: Int?) {
+        guard !isChatTyping else { return }
+        refreshUnifiedDecisionContext()
+
+        if let last = decisionChatMessages.last, last.cta != nil {
+            return
+        }
+
+        let questionCount = askedFrameworkQuestionCount()
+        if questionCount >= 4 {
+            forceChatTransition()
+            return
+        }
+
+        isChatTyping = true
+        appendTypingPlaceholder()
+
+        Task {
+            do {
+                let response = try await services.ai.continueDecisionConversation(
+                    projectID: activeDraft.id,
+                    transcript: decisionChatMessages.filter { !$0.isTypingPlaceholder },
+                    latestUserResponse: latestUserResponse,
+                    selectedOptionIndex: selectedOptionIndex,
+                    draft: activeDraft,
+                    userProfile: userAIProfile
+                )
+                removeTypingPlaceholder()
+                applyConversationResponse(response)
+                aiModeLabel = "Clarity AI"
+                isChatTyping = false
+            } catch {
+                if questionCount >= 3 {
+                    forceChatTransition(message: "I have enough context to build your matrix. Let's set up your options.")
+                } else {
+                    removeTypingPlaceholder()
+                    aiModeLabel = "AI unavailable"
+                    appendConversationFailureMessage("I couldn’t get the next Clarity AI turn. Please retry.")
+                    isChatTyping = false
+                }
+            }
+        }
+    }
+
+    private func applyConversationResponse(_ response: DecisionConversationResponse) {
+        var message = response.message
+        message.id = UUID().uuidString
+        message.createdAt = .now
+        decisionChatMessages.append(message)
+        decisionChatPhase = response.conversationState.phase
+        activeDraft.chatPhase = response.conversationState.phase
+        activeDraft.frameworksUsed = response.conversationState.frameworksUsed
+        activeDraft.lastUpdatedAt = .now
+        rebuildDecisionConversationSummary()
+        refreshUnifiedDecisionContext()
+    }
+
+    private func applyMatrixSetupFromConversation(_ setup: DecisionMatrixSetup) {
+        activeDraft.decisionBrief = setup.decisionBrief
+        activeDraft.category = setup.decisionBrief.inferredCategory
+        activeDraft.chatDerivedOptions = setup.decisionBrief.detectedOptions
+        activeDraft.chatDerivedCriteria = setup.suggestedCriteria
+        let optionSource = setup.suggestedOptions.isEmpty ? setup.decisionBrief.detectedOptions : setup.suggestedOptions
+        mergeSuggestedOptions(optionSource)
+        activeDraft.criteria = RankingEngine.normalizedCriteria(
+            setup.suggestedCriteria.isEmpty ? setup.decisionBrief.suggestedCriteria : setup.suggestedCriteria
+        )
+        activeDraft.constraintFindings = DecisionEngine.shared.detectConstraints(draft: activeDraft)
+        activeDraft.lastUpdatedAt = .now
+        refreshUnifiedDecisionContext()
+    }
+
+    private func appendConversationFailureMessage(_ text: String) {
+        decisionChatMessages.append(
+            DecisionChatMessage(
                 role: .assistant,
-                content: "I have enough context to turn this into real options, criteria, and draft scoring. Let's set up the comparison.",
+                content: text,
                 options: [],
                 allowSkip: false,
                 allowsFreeformReply: false,
-                cta: ChatMessageCTA(title: "Set Up Your Options", action: .setupOptions),
+                cta: nil,
                 framework: nil,
                 createdAt: .now,
                 isTypingPlaceholder: false
             )
-        }
-
-        let nextTurn = turns[activeDraft.frameworksUsed.count]
-        activeDraft.frameworksUsed.append(nextTurn.framework)
-        activeDraft.chatPhase = .collecting
-
-        return DecisionChatMessage(
-            id: UUID().uuidString,
-            role: .assistant,
-            content: nextTurn.question,
-            options: nextTurn.options.enumerated().map { index, text in
-                DecisionChatOption(id: UUID().uuidString, index: index + 1, text: text)
-            },
-            allowSkip: true,
-            allowsFreeformReply: true,
-            cta: nil,
-            framework: nextTurn.framework,
-            createdAt: .now,
-            isTypingPlaceholder: false
         )
-    }
-
-    private func decisionChatTurnSeeds() -> [(framework: DecisionFramework, question: String, options: [String])] {
-        let brief = LocalDecisionIntelligence.decisionBrief(for: activeDraft, extractedEvidence: [], userProfile: userAIProfile)
-        let optionLabels = brief.detectedOptions.map(\.label)
-        let leadingGoal = conciseChatLabel(brief.goals.first, fallback: "Make the strongest long-term choice")
-        let leadingConstraint = conciseChatLabel(brief.constraints.first, fallback: "A hard constraint rules options out")
-        let leadingRisk = conciseChatLabel(brief.risks.first, fallback: "One risk could change the decision")
-        let leadingTension = conciseChatLabel(brief.tensions.first, fallback: "There is one central trade-off")
-
-        return [
-            (
-                .valuesAlignment,
-                "What matters most in this decision right now?",
-                uniqueChatOptions([
-                    leadingGoal,
-                    "Protect stability and avoid a bad move",
-                    "Keep flexibility if facts change",
-                    "Move toward the better long-term option"
-                ])
-            ),
-            (
-                .riskAssessment,
-                "What would rule an option out fastest?",
-                uniqueChatOptions([
-                    leadingConstraint,
-                    "The timeline is too slow",
-                    "The money or practical trade-off is wrong",
-                    leadingRisk
-                ])
-            ),
-            (
-                .opportunityCost,
-                optionLabels.count >= 2
-                    ? "Which option set is closest to the real choice?"
-                    : "What kind of choice am I setting up for you?",
-                optionLabels.count >= 2
-                    ? uniqueChatOptions(Array(optionLabels.prefix(4)))
-                    : uniqueChatOptions(chatFallbackOptionPrompts())
-            ),
-            (
-                .reversibility,
-                "What is still missing before I set up the scoring?",
-                uniqueChatOptions([
-                    "Nothing major, compare now",
-                    "I need to validate one assumption",
-                    "I need clearer option names",
-                    leadingTension
-                ])
-            )
-        ]
-    }
-
-    private func chatFallbackOptionPrompts() -> [String] {
-        let lower = activeDraft.contextNarrative.lowercased()
-
-        if lower.contains("job") || lower.contains("offer") || lower.contains("role") {
-            return [
-                "Stay with the current path",
-                "Take the new role or offer",
-                "Negotiate before deciding",
-                "Something else"
-            ]
-        }
-
-        if lower.contains("move") || lower.contains("city") || lower.contains("relocate") {
-            return [
-                "Stay where I am",
-                "Move to the new place",
-                "Test the move first",
-                "Something else"
-            ]
-        }
-
-        if lower.contains("hire") || lower.contains("candidate") || lower.contains("recruit") {
-            return [
-                "Compare named candidates",
-                "Keep searching",
-                "Make a conditional offer",
-                "Something else"
-            ]
-        }
-
-        if lower.contains("vendor") || lower.contains("provider") || lower.contains("tool") || lower.contains("platform") {
-            return [
-                "Keep the current solution",
-                "Switch to the new option",
-                "Pilot before committing",
-                "Something else"
-            ]
-        }
-
-        return [
-            "Keep the current path",
-            "Choose the strongest alternative",
-            "Try a reversible middle option",
-            "Something else"
-        ]
-    }
-
-    private func conciseChatLabel(_ text: String?, fallback: String) -> String {
-        guard let text, text.trimmed.isNotEmpty else { return fallback }
-        let cleaned = text
-            .replacingOccurrences(of: "Any new option should be ", with: "")
-            .replacingOccurrences(of: "The user is ", with: "")
-            .replacingOccurrences(of: "The current recommendation may ", with: "")
-            .trimmed
-        let words = cleaned.split(whereSeparator: \.isWhitespace)
-        if words.count <= 8 {
-            return cleaned
-        }
-        return words.prefix(8).joined(separator: " ")
-    }
-
-    private func uniqueChatOptions(_ candidates: [String]) -> [String] {
-        var seen: Set<String> = []
-        var results: [String] = []
-
-        for candidate in candidates {
-            let trimmed = candidate.trimmed
-            guard !trimmed.isEmpty else { continue }
-            let key = trimmed.lowercased()
-            guard !seen.contains(key) else { continue }
-            seen.insert(key)
-            results.append(trimmed)
-            if results.count == 4 {
-                break
-            }
-        }
-
-        while results.count < 4 {
-            let fallback = ["Not sure yet", "Need more detail", "It depends on evidence", "Something else"][results.count]
-            if !seen.contains(fallback.lowercased()) {
-                seen.insert(fallback.lowercased())
-                results.append(fallback)
-            }
-        }
-
-        return results
     }
 }
 

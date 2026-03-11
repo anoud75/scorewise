@@ -1143,38 +1143,167 @@ enum LocalDecisionIntelligence {
     }
 
     static func biasChallenges(for draft: RankingDraft, preferredOption: String, userProfile: AIUserProfile?) -> [BiasChallengeResponse] {
-        let topValue = userProfile?.valuesRanking.first?.lowercased() ?? "your top value"
+        let topValue = userProfile?.valuesRanking.first ?? "your top value"
         let challenge = userProfile?.biggestChallenge ?? ""
-        let brief = decisionBrief(for: draft, extractedEvidence: [], userProfile: userProfile)
-        let context = ([brief.summary] + brief.risks + brief.tensions).joined(separator: " ").lowercased()
+        let normalizedPreferred = preferredOption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let preferred = normalizedPreferred.isEmpty ? (draft.vendors.first?.name ?? "the preferred option") : normalizedPreferred
 
-        let allPrompts: [BiasChallengeResponse] = [
-            BiasChallengeResponse(type: .friendTest, question: "If someone you care about had your exact facts and constraints, what would you tell them to do about \(preferredOption) and why?", response: ""),
-            BiasChallengeResponse(type: .tenTenTen, question: "How will choosing \(preferredOption) feel in 10 minutes, 10 months, and 10 years?", response: ""),
-            BiasChallengeResponse(type: .valuesCheck, question: "Which option best protects \(topValue), even if it is less comfortable right now?", response: ""),
-            BiasChallengeResponse(type: .preMortem, question: "Assume \(preferredOption) fails. What is the most plausible reason it failed?", response: ""),
-            BiasChallengeResponse(type: .worstCase, question: "What is the realistic worst-case outcome if you choose \(preferredOption), and how would you recover?", response: ""),
-            BiasChallengeResponse(type: .inactionCost, question: "What is the cost of delaying this decision by another 30 days?", response: ""),
-            BiasChallengeResponse(type: .inversion, question: "If you wanted to make the worst possible choice here, what would you ignore or rationalize?", response: "")
+        let otherOptions = draft.vendors
+            .map(\.name)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.caseInsensitiveCompare(preferred) != .orderedSame }
+        let alternative = otherOptions.first ?? "the other option"
+
+        let weakness = extractWeakness(for: preferred, from: draft.contextNarrative)
+        let strength = extractStrength(for: alternative, from: draft.contextNarrative)
+
+        let promptsByType: [BiasChallengeType: String] = [
+            .friendTest: "If a colleague asked why \(preferred) over \(alternative), what is your one-line reason?",
+            .preMortem: weakness != nil
+                ? "\(preferred): \(weakness!). Can your team cover this gap in 6 months?"
+                : "What is the likeliest reason \(preferred) fails after 6 months?",
+            .inversion: strength != nil
+                ? "What do you lose by not choosing \(alternative), given \(strength!)?"
+                : "Which option would you regret not choosing more, and why?",
+            .worstCase: "If \(preferred) underperforms in 3 months, what is your backup plan?",
+            .tenTenTen: "Will this choice still feel right in 1 year when early excitement fades?",
+            .inactionCost: "What happens if you delay this decision by 2 more weeks?",
+            .valuesCheck: "Does \(preferred) protect \(topValue), or only feel safer right now?"
         ]
 
         let orderedTypes: [BiasChallengeType]
         switch challenge {
         case BiggestChallenge.overthinking.rawValue:
-            orderedTypes = [.tenTenTen, .friendTest, .inactionCost]
+            orderedTypes = [.inversion, .inactionCost, .friendTest]
         case BiggestChallenge.fear.rawValue:
-            orderedTypes = [.worstCase, .preMortem, .friendTest]
+            orderedTypes = [.worstCase, .friendTest, .preMortem]
         case BiggestChallenge.tooManyOptions.rawValue:
-            orderedTypes = [.inversion, .valuesCheck, .inactionCost]
+            orderedTypes = [.valuesCheck, .inversion, .inactionCost]
         default:
-            orderedTypes = context.contains("risk") || context.contains("security")
-                ? [.preMortem, .worstCase, .valuesCheck]
-                : [.valuesCheck, .friendTest, .tenTenTen]
+            orderedTypes = [.preMortem, .inversion, .valuesCheck]
         }
 
+        var usedQuestions = Set<String>()
         return orderedTypes.compactMap { type in
-            allPrompts.first(where: { $0.type == type })
+            guard let raw = promptsByType[type] else { return nil }
+            let question = compactChallengeQuestion(raw)
+            guard !question.isEmpty else { return nil }
+            let stem = normalizedQuestionStem(question)
+            guard !usedQuestions.contains(stem) else { return nil }
+            usedQuestions.insert(stem)
+            return BiasChallengeResponse(
+                type: type,
+                question: question,
+                response: "",
+                quickPickOptions: quickPickOptions(for: type, preferred: preferred, alternative: alternative),
+                selectedQuickPick: nil
+            )
         }
+    }
+
+    private static func quickPickOptions(for type: BiasChallengeType, preferred: String, alternative: String) -> [String] {
+        switch type {
+        case .friendTest:
+            return [
+                "I can defend \(preferred) clearly",
+                "\(alternative) has a better case",
+                "I need more evidence first",
+                "Both are equally defensible"
+            ]
+        case .preMortem:
+            return [
+                "Skill gap in first 6 months",
+                "Execution mismatch with team",
+                "Stakeholder alignment risk",
+                "Unclear onboarding plan"
+            ]
+        case .inversion:
+            return [
+                "I would regret skipping \(alternative)",
+                "I would regret skipping \(preferred)",
+                "Regret risk is equal",
+                "Regret depends on timeline"
+            ]
+        case .worstCase:
+            return [
+                "I have a backup plan",
+                "Backup plan needs work",
+                "Worst-case is manageable",
+                "Worst-case is unacceptable"
+            ]
+        case .tenTenTen:
+            return [
+                "Feels right long-term",
+                "Only feels right now",
+                "Unsure after initial phase",
+                "Need future-state test"
+            ]
+        case .inactionCost:
+            return [
+                "Delay cost is high",
+                "Delay cost is moderate",
+                "Delay cost is low",
+                "Need data on delay impact"
+            ]
+        case .valuesCheck:
+            return [
+                "Aligned with my top value",
+                "Partially aligned",
+                "Feels safe, not aligned",
+                "Value alignment is unclear"
+            ]
+        }
+    }
+
+    private static func extractWeakness(for optionName: String, from narrative: String) -> String? {
+        extractSignal(for: optionName, from: narrative, signals: ["weak", "limited", "lacks", "weaker", "slower", "less experience", "no experience", "junior", "gap"])
+    }
+
+    private static func extractStrength(for optionName: String, from narrative: String) -> String? {
+        extractSignal(for: optionName, from: narrative, signals: ["strong", "excellent", "extensive", "built", "deployed", "led", "proven", "experienced"])
+    }
+
+    private static func extractSignal(for optionName: String, from narrative: String, signals: [String]) -> String? {
+        let normalizedName = optionName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedName.isEmpty else { return nil }
+        let lastToken = normalizedName.split(separator: " ").last.map(String.init) ?? normalizedName
+        let sentences = narrative.components(separatedBy: CharacterSet(charactersIn: ".\n"))
+
+        for sentence in sentences {
+            let cleaned = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty else { continue }
+            let lower = cleaned.lowercased()
+            guard lower.contains(normalizedName) || lower.contains(lastToken) else { continue }
+            if signals.contains(where: { lower.contains($0) }) {
+                return compactChallengeQuestion(cleaned, maxLength: 44)
+            }
+        }
+        return nil
+    }
+
+    private static func compactChallengeQuestion(_ text: String, maxLength: Int = 100) -> String {
+        let oneLine = text
+            .components(separatedBy: .newlines)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let firstSentence = oneLine
+            .split(whereSeparator: { $0 == "." || $0 == "!" || $0 == "?" })
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? oneLine
+        guard !firstSentence.isEmpty else { return "" }
+        if firstSentence.count <= maxLength {
+            return firstSentence
+        }
+        return String(firstSentence.prefix(maxLength)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func normalizedQuestionStem(_ text: String) -> String {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .prefix(6)
+            .joined(separator: " ")
     }
 
     static func insights(for draft: RankingDraft, result: RankingResult, userProfile: AIUserProfile?) -> InsightReportDraft {
@@ -1226,7 +1355,10 @@ enum LocalDecisionIntelligence {
             winnerReasoning: "\(winner) currently appears strongest because it handles the core tension of \(brief.tensions.first?.lowercased() ?? "this decision") better than \(runnerUp), and it performs better on the criteria carrying the most weight, especially \(biggestGap?.criterion.lowercased() ?? "the highest-impact criteria").",
             riskFlags: riskFlags,
             overlookedStrategicPoints: overlooked,
-            sensitivityFindings: sensitivity.isEmpty ? ["Gut check: choose the option that still protects \(value.lowercased()) if conditions become harder than expected."] : sensitivity
+            sensitivityFindings: sensitivity.isEmpty ? ["Gut check: choose the option that still protects \(value.lowercased()) if conditions become harder than expected."] : sensitivity,
+            drivers: summaryLines,
+            confidenceLabel: result.confidenceScore >= 0.75 ? "High" : (result.confidenceScore < 0.45 ? "Low" : "Medium"),
+            nextStep: overlooked.first
         )
     }
 
@@ -2254,7 +2386,10 @@ final class AnthropicAIService: AIservicing {
                 winnerReasoning: raw.recommendation,
                 riskFlags: blindSpots,
                 overlookedStrategicPoints: [raw.nextStep],
-                sensitivityFindings: [raw.gutCheck, confidenceLine]
+                sensitivityFindings: [raw.gutCheck, confidenceLine],
+                drivers: tradeoffs,
+                confidenceLabel: raw.confidence.level.capitalized,
+                nextStep: raw.nextStep
             )
         } catch {
             return try await fallback.generateInsights(draft: draft, result: result, userProfile: userProfile)
@@ -2465,6 +2600,9 @@ final class FirebaseFunctionsAIService: AIservicing {
                     "extractedText": extractedEvidence
                 ]
             ]
+            if let unifiedContext = Self.unifiedContextDictionary(draft.unifiedContext) {
+                payload["unifiedContext"] = unifiedContext
+            }
             if let userProfile {
                 payload["userProfile"] = Self.userProfileDictionary(userProfile)
             }
@@ -2489,11 +2627,16 @@ final class FirebaseFunctionsAIService: AIservicing {
                 "vendors": draft.vendors.map { ["id": $0.id, "name": $0.name, "notes": $0.notes] },
                 "extractedText": extractedEvidence
             ]
+            if let unifiedContext = Self.unifiedContextDictionary(draft.unifiedContext) {
+                payload["unifiedContext"] = unifiedContext
+            }
             if let userProfile {
                 payload["userProfile"] = Self.userProfileDictionary(userProfile)
             }
             let result = try await functions.httpsCallable("suggestRankingInputs").call(payload)
-            return parseSuggestedInputs(result.data, draft: draft)
+            let parsed = parseSuggestedInputs(result.data, draft: draft)
+            print("🤖 AI_SOURCE function=suggestRankingInputs source=cloud projectId=\(draft.id)")
+            return parsed
         } catch {
             if allowLocalFallback {
                 logAIFallback(functionName: "suggestRankingInputs", projectID: draft.id, phase: context.rawValue, error: error)
@@ -2510,6 +2653,9 @@ final class FirebaseFunctionsAIService: AIservicing {
                 "projectId": draft.id,
                 "situationText": draft.contextNarrative
             ]
+            if let unifiedContext = Self.unifiedContextDictionary(draft.unifiedContext) {
+                payload["unifiedContext"] = unifiedContext
+            }
             if let userProfile {
                 payload["userProfile"] = Self.userProfileDictionary(userProfile)
             }
@@ -2532,6 +2678,9 @@ final class FirebaseFunctionsAIService: AIservicing {
                 "situationText": draft.contextNarrative,
                 "clarifyingQuestions": draft.clarifyingQuestions.map { ["question": $0.question, "answer": $0.answer] }
             ]
+            if let unifiedContext = Self.unifiedContextDictionary(draft.unifiedContext) {
+                payload["unifiedContext"] = unifiedContext
+            }
             if let userProfile {
                 payload["userProfile"] = Self.userProfileDictionary(userProfile)
             }
@@ -2555,6 +2704,10 @@ final class FirebaseFunctionsAIService: AIservicing {
                 "situationText": draft.contextNarrative,
                 "clarifyingQuestions": draft.clarifyingQuestions.map { ["question": $0.question, "answer": $0.answer] }
             ]
+            if let unifiedContext = Self.unifiedContextDictionary(draft.unifiedContext) {
+                payload["unifiedContext"] = unifiedContext
+                payload["challengeResponsesSummary"] = unifiedContext.challengeResponsesSummary
+            }
             if let userProfile {
                 payload["userProfile"] = Self.userProfileDictionary(userProfile)
             }
@@ -2576,6 +2729,20 @@ final class FirebaseFunctionsAIService: AIservicing {
                 "projectId": projectID,
                 "contextNarrative": contextNarrative,
                 "usageContext": usageContext.rawValue
+            ]
+            payload["unifiedContext"] = [
+                "decisionNarrative": contextNarrative,
+                "conversationTranscript": [],
+                "clarifyingAnswers": [],
+                "options": [],
+                "constraints": [],
+                "criteria": [],
+                "scores": [],
+                "biasChallenges": [],
+                "attachmentEvidence": [],
+                "challengeResponsesSummary": [],
+                "attachmentsSummary": [],
+                "knowledgeCitations": []
             ]
             if let userProfile {
                 payload["userProfile"] = Self.userProfileDictionary(userProfile)
@@ -2611,6 +2778,9 @@ final class FirebaseFunctionsAIService: AIservicing {
                     "frameworksUsed": draft.frameworksUsed.map(\.rawValue)
                 ]
             ]
+            if let unifiedContext = Self.unifiedContextDictionary(draft.unifiedContext) {
+                payload["unifiedContext"] = unifiedContext
+            }
             if let userProfile {
                 payload["userProfile"] = Self.userProfileDictionary(userProfile)
             }
@@ -2648,6 +2818,9 @@ final class FirebaseFunctionsAIService: AIservicing {
                     "clarifyingQuestions": draft.clarifyingQuestions.map { ["question": $0.question, "answer": $0.answer] }
                 ]
             ]
+            if let unifiedContext = Self.unifiedContextDictionary(draft.unifiedContext) {
+                payload["unifiedContext"] = unifiedContext
+            }
             if let userProfile {
                 payload["userProfile"] = Self.userProfileDictionary(userProfile)
             }
@@ -2678,8 +2851,26 @@ final class FirebaseFunctionsAIService: AIservicing {
             if let draft {
                 payload["draft"] = [
                     "title": draft.title,
-                    "contextNarrative": draft.contextNarrative
+                    "contextNarrative": draft.contextNarrative,
+                    "usageContext": draft.usageContext.rawValue,
+                    "vendors": draft.vendors.map { ["id": $0.id, "name": $0.name, "notes": $0.notes] },
+                    "criteria": draft.criteria.map { ["id": $0.id, "name": $0.name, "weightPercent": $0.weightPercent] },
+                    "scores": draft.scores.map { ["vendorID": $0.vendorID, "criterionID": $0.criterionID, "score": $0.score, "confidence": $0.confidence] },
+                    "constraints": (draft.constraintFindings ?? []).map { ["rule": $0.rule, "violatedOptionLabels": $0.violatedOptionLabels] },
+                    "biasChallenges": draft.biasChallenges.map {
+                        [
+                            "type": $0.type.rawValue,
+                            "question": $0.question,
+                            "response": $0.response,
+                            "selectedQuickPick": $0.selectedQuickPick ?? ""
+                        ]
+                    }
                 ]
+                if let unifiedContext = Self.unifiedContextDictionary(draft.unifiedContext) {
+                    payload["unifiedContext"] = unifiedContext
+                    payload["attachmentsSummary"] = unifiedContext.attachmentsSummary
+                    payload["challengeResponsesSummary"] = unifiedContext.challengeResponsesSummary
+                }
             }
             if let userProfile {
                 payload["userProfile"] = Self.userProfileDictionary(userProfile)
@@ -2755,6 +2946,11 @@ final class FirebaseFunctionsAIService: AIservicing {
                     "rankedVendors": result.rankedVendors.map { ["vendorID": $0.vendorID, "vendorName": $0.vendorName, "totalScore": $0.totalScore] }
                 ]
             ]
+            if let unifiedContext = Self.unifiedContextDictionary(draft.unifiedContext) {
+                payload["unifiedContext"] = unifiedContext
+                payload["attachmentsSummary"] = unifiedContext.attachmentsSummary
+                payload["challengeResponsesSummary"] = unifiedContext.challengeResponsesSummary
+            }
             if let userProfile {
                 payload["userProfile"] = Self.userProfileDictionary(userProfile)
             }
@@ -2768,14 +2964,19 @@ final class FirebaseFunctionsAIService: AIservicing {
                 logAICloudError(functionName: "generateInsights", projectID: draft.id, error: shapeError)
                 throw ScoreWiseServiceError.featureUnavailable("AI insights payload is invalid. Please retry.")
             }
-            return InsightReportDraft(
+            let insight = InsightReportDraft(
                 summary: dictionary["summary"] as? String ?? "",
                 winnerReasoning: dictionary["winnerReasoning"] as? String ?? "",
                 riskFlags: dictionary["riskFlags"] as? [String] ?? [],
                 overlookedStrategicPoints: dictionary["overlookedStrategicPoints"] as? [String] ?? [],
                 sensitivityFindings: dictionary["sensitivityFindings"] as? [String] ?? [],
+                drivers: dictionary["drivers"] as? [String],
+                confidenceLabel: dictionary["confidenceLabel"] as? String,
+                nextStep: dictionary["nextStep"] as? String,
                 citations: parseEvidenceCitations(dictionary["citations"] as Any)
             )
+            print("🤖 AI_SOURCE function=generateInsights source=cloud projectId=\(draft.id)")
+            return insight
         } catch {
             if allowLocalFallback {
                 logAIFallback(functionName: "generateInsights", projectID: draft.id, error: error)
@@ -2804,6 +3005,78 @@ final class FirebaseFunctionsAIService: AIservicing {
             "speedPreference": profile.speedPreference,
             "valuesRanking": profile.valuesRanking,
             "interests": profile.interests
+        ]
+    }
+
+    private static func unifiedContextDictionary(_ context: UnifiedDecisionContext?) -> [String: Any]? {
+        guard let context else { return nil }
+        return [
+            "decisionNarrative": context.decisionNarrative,
+            "conversationTranscript": context.conversationTranscript,
+            "clarifyingAnswers": context.clarifyingAnswers.map {
+                [
+                    "id": $0.id,
+                    "question": $0.question,
+                    "answer": $0.answer
+                ]
+            },
+            "options": context.options.map {
+                [
+                    "id": $0.id,
+                    "label": $0.label,
+                    "type": $0.type.rawValue,
+                    "description": $0.description ?? ""
+                ]
+            },
+            "constraints": context.constraints.map {
+                [
+                    "id": $0.id,
+                    "type": $0.type.rawValue,
+                    "rule": $0.rule,
+                    "violatedOptionIDs": $0.violatedOptionIDs,
+                    "violatedOptionLabels": $0.violatedOptionLabels,
+                    "severity": $0.severity
+                ]
+            },
+            "criteria": context.criteria.map {
+                [
+                    "id": $0.id,
+                    "name": $0.name,
+                    "detail": $0.detail,
+                    "category": $0.category,
+                    "weightPercent": $0.weightPercent
+                ]
+            },
+            "scores": context.scores.map {
+                [
+                    "id": $0.id,
+                    "vendorID": $0.vendorID,
+                    "criterionID": $0.criterionID,
+                    "score": $0.score,
+                    "confidence": $0.confidence,
+                    "evidenceSnippet": $0.evidenceSnippet
+                ]
+            },
+            "biasChallenges": context.biasChallenges.map {
+                [
+                    "id": $0.id,
+                    "type": $0.type.rawValue,
+                    "question": $0.question,
+                    "response": $0.response,
+                    "quickPickOptions": $0.quickPickOptions,
+                    "selectedQuickPick": $0.selectedQuickPick ?? ""
+                ]
+            },
+            "attachmentEvidence": context.attachmentEvidence,
+            "challengeResponsesSummary": context.challengeResponsesSummary,
+            "attachmentsSummary": context.attachmentsSummary,
+            "knowledgeCitations": context.knowledgeCitations.map {
+                [
+                    "cardId": $0.cardId,
+                    "sourceLabel": $0.sourceLabel,
+                    "usedFor": $0.usedFor.rawValue
+                ]
+            }
         ]
     }
 
@@ -3043,10 +3316,17 @@ final class FirebaseFunctionsAIService: AIservicing {
             guard let rawType = $0["type"] as? String, let type = BiasChallengeType(rawValue: rawType) else {
                 return nil
             }
+            let quickPickOptions = ($0["quickPickOptions"] as? [Any] ?? [])
+                .compactMap { $0 as? String }
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            let selectedQuickPick = ($0["selectedQuickPick"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             return BiasChallengeResponse(
                 type: type,
                 question: $0["question"] as? String ?? "",
-                response: $0["response"] as? String ?? ""
+                response: $0["response"] as? String ?? "",
+                quickPickOptions: Array(quickPickOptions.prefix(5)),
+                selectedQuickPick: selectedQuickPick?.isEmpty == false ? selectedQuickPick : nil
             )
         }
     }
@@ -3723,32 +4003,57 @@ struct LocalNotificationService: NotificationServicing {
 
     func scheduleFollowUp(for draft: RankingDraft, result: RankingResult?) async throws {
         #if canImport(UserNotifications)
-        guard let followUpDate = draft.followUpDate else { return }
+        let pendingCheckpoints = draft.followUpCheckpoints
+            .filter { $0.completedAt == nil }
+            .sorted { $0.dueDate < $1.dueDate }
+        let scheduleDates: [(id: String, title: String, dueDate: Date)] = {
+            if !pendingCheckpoints.isEmpty {
+                return pendingCheckpoints.map { checkpoint in
+                    (id: checkpoint.id, title: checkpoint.title, dueDate: checkpoint.dueDate)
+                }
+            }
+            if let followUpDate = draft.followUpDate {
+                return [(id: "default", title: "30-day review", dueDate: followUpDate)]
+            }
+            return []
+        }()
+        guard !scheduleDates.isEmpty else { return }
         guard await requestAuthorizationIfNeeded() else {
             throw ScoreWiseServiceError.featureUnavailable("Notifications are disabled for Clarity AI. Enable them in Settings to schedule follow-up reviews.")
         }
 
-        let content = UNMutableNotificationContent()
-        content.title = "Review your decision"
-        if let winner = result?.rankedVendors.first?.vendorName, !winner.isEmpty {
-            content.body = "Revisit \"\(draft.title)\" and see whether choosing \(winner) still holds up after 30 days."
-        } else {
-            content.body = "Revisit \"\(draft.title)\" and record what happened after 30 days."
-        }
-        content.sound = .default
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: scheduleDates.map { notificationIdentifier(projectID: draft.id, checkpointID: $0.id) })
 
-        let triggerDate = max(followUpDate, Date().addingTimeInterval(5))
-        let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate)
-        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
-        let request = UNNotificationRequest(identifier: notificationIdentifier(projectID: draft.id), content: content, trigger: trigger)
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [notificationIdentifier(projectID: draft.id)])
-        try await UNUserNotificationCenter.current().add(request)
+        for item in scheduleDates {
+            let content = UNMutableNotificationContent()
+            content.title = "Review your decision"
+            if let winner = result?.rankedVendors.first?.vendorName, !winner.isEmpty {
+                content.body = "\(item.title): revisit \"\(draft.title)\" and confirm whether choosing \(winner) still holds."
+            } else {
+                content.body = "\(item.title): revisit \"\(draft.title)\" and record what changed."
+            }
+            content.sound = .default
+
+            let triggerDate = max(item.dueDate, Date().addingTimeInterval(5))
+            let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: triggerDate)
+            let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+            let request = UNNotificationRequest(
+                identifier: notificationIdentifier(projectID: draft.id, checkpointID: item.id),
+                content: content,
+                trigger: trigger
+            )
+            try await center.add(request)
+        }
         #endif
     }
 
     func cancelFollowUp(for projectID: String) async {
         #if canImport(UserNotifications)
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [notificationIdentifier(projectID: projectID)])
+        let center = UNUserNotificationCenter.current()
+        let pending = await center.pendingNotificationRequests()
+        let ids = pending.map(\.identifier).filter { $0.hasPrefix("followup.\(projectID).") }
+        center.removePendingNotificationRequests(withIdentifiers: ids)
         #endif
     }
 
@@ -3758,8 +4063,8 @@ struct LocalNotificationService: NotificationServicing {
         #endif
     }
 
-    private func notificationIdentifier(projectID: String) -> String {
-        "followup.\(projectID)"
+    private func notificationIdentifier(projectID: String, checkpointID: String) -> String {
+        "followup.\(projectID).\(checkpointID)"
     }
 }
 
@@ -3891,6 +4196,7 @@ struct AppServices {
         let aiService: AIservicing = {
             let allowDirect = ProcessInfo.processInfo.environment["SCOREWISE_ALLOW_DIRECT_AI_DEBUG"] == "1"
             let allowLocalFallback = ProcessInfo.processInfo.environment["SCOREWISE_ENABLE_LOCAL_AI_FALLBACK"] == "1"
+            print("🤖 AI_BOOTSTRAP firebaseConfigured=\(firebaseConfigured) localFallback=\(allowLocalFallback) directDebug=\(allowDirect)")
             if allowDirect, let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !apiKey.isEmpty {
                 return AnthropicAIService(apiKey: apiKey)
             }

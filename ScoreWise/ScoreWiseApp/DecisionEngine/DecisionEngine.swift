@@ -143,7 +143,10 @@ struct DecisionEngine {
             winnerReasoning: report.recommendation,
             riskFlags: report.risks,
             overlookedStrategicPoints: [report.nextStep],
-            sensitivityFindings: report.biasChecks + [report.confidence]
+            sensitivityFindings: report.biasChecks + [report.confidence],
+            drivers: report.drivers,
+            confidenceLabel: report.confidence,
+            nextStep: report.nextStep
         )
     }
 
@@ -463,35 +466,46 @@ struct ResultInterpreter {
     func interpret(draft: RankingDraft, result: RankingResult, constraints: [ConstraintFinding]) -> InterpretedResult {
         let winner = result.rankedVendors.first
         let runnerUp = result.rankedVendors.dropFirst().first
+        let winnerName = winner?.vendorName ?? "the leading option"
+        let runnerName = runnerUp?.vendorName ?? "the next option"
         let topCriteria = draft.criteria.sorted { $0.weightPercent > $1.weightPercent }.prefix(3)
 
         let drivers: [String] = topCriteria.map { criterion in
             let winnerScore = draft.scores.first { $0.vendorID == winner?.vendorID && $0.criterionID == criterion.id }?.score ?? 0
             let secondScore = draft.scores.first { $0.vendorID == runnerUp?.vendorID && $0.criterionID == criterion.id }?.score ?? 0
             let gap = (winnerScore - secondScore).rounded(to: 1)
-            return "\(criterion.name) carries \(Int(criterion.weightPercent.rounded()))% weight; current lead gap is \(gap) points."
+            return "\(criterion.name) (\(Int(criterion.weightPercent.rounded()))%): \(winnerName) \(winnerScore.rounded(to: 1)) vs \(runnerName) \(secondScore.rounded(to: 1)) (gap \(gap))."
         }
 
         var risks: [String] = []
         if result.tieDetected {
-            risks.append("Top options are close; small weight changes can flip the winner.")
+            let margin = ((winner?.totalScore ?? 0) - (runnerUp?.totalScore ?? 0)).rounded(to: 1)
+            risks.append("Top options are near-tied (\(margin) points), so one criterion reweight can flip the winner.")
         }
         if result.confidenceScore < 0.6 {
-            risks.append("Confidence is limited by weak or sparse evidence.")
+            let lowConfidenceCount = draft.scores.filter { $0.confidence < 0.60 }.count
+            risks.append("Evidence confidence is limited (\(lowConfidenceCount) low-confidence score\(lowConfidenceCount == 1 ? "" : "s")).")
+        }
+        if let unstable = result.sensitivityFindings.first(where: \.winnerFlipped) {
+            risks.append("Sensitivity check: changing \(unstable.criterionName.lowercased()) can flip the winner.")
         }
         let violated = constraints.filter { !$0.violatedOptionIDs.isEmpty }
         if !violated.isEmpty {
-            risks.append("Hard constraint issues were detected in one or more options.")
+            let labels = violated.flatMap(\.violatedOptionLabels).uniqued().prefix(3).joined(separator: ", ")
+            risks.append("Hard-constraint issues detected for \(labels.isEmpty ? "one or more options" : labels).")
         }
         if risks.isEmpty {
-            risks.append("Recheck the top weighted criterion assumptions before finalizing.")
+            risks.append("Validate the top weighted criterion (\(topCriteria.first?.name ?? "fit")) with one external check before finalizing.")
         }
 
         let confidence: String
         switch result.confidenceScore {
-        case ..<0.45: confidence = "Low"
-        case ..<0.75: confidence = "Medium"
-        default: confidence = "High"
+        case ..<0.45:
+            confidence = "Low — the lead is thin or depends on weak evidence."
+        case ..<0.75:
+            confidence = "Medium — the lead is directionally clear but still sensitive to one assumption."
+        default:
+            confidence = "High — the leader remains stable across weighted criteria and sensitivity checks."
         }
 
         return InterpretedResult(drivers: drivers.isEmpty ? ["Weighted scores currently favor one option across key criteria."] : drivers, risks: risks, confidence: confidence)
@@ -526,22 +540,67 @@ struct BiasDetector {
 struct RecommendationEngine {
     func recommend(draft: RankingDraft, result: RankingResult, interpreted: InterpretedResult, constraints: [ConstraintFinding]) -> RecommendationSummary {
         let winner = result.rankedVendors.first?.vendorName.trimmed.nonEmpty ?? "Top option"
+        let runnerUp = result.rankedVendors.dropFirst().first?.vendorName.trimmed.nonEmpty ?? "the runner-up"
+        let decisive = decisiveCriterion(in: draft, result: result)
         let hardViolationOnWinner = constraints.contains { finding in
             finding.violatedOptionLabels.contains(where: { comparable($0) == comparable(winner) }) && finding.severity == "hard_violation"
         }
 
         let recommendation: String
         if hardViolationOnWinner {
-            recommendation = "\(winner) leads on weighted scores, but it currently violates a hard constraint. Do not finalize before resolving that constraint."
+            let decisiveText = decisive.map { " It currently leads most on \($0.name)." } ?? ""
+            recommendation = "\(winner) leads on weighted scores, but it violates a hard constraint.\(decisiveText) Do not finalize before resolving that constraint."
         } else {
-            recommendation = "\(winner) is the recommended option based on weighted fit across your top criteria."
+            if let decisive {
+                recommendation = "\(winner) is recommended because it has the strongest weighted lead on \(decisive.name) (\(decisive.winnerScore.rounded(to: 1)) vs \(decisive.runnerScore.rounded(to: 1)))."
+            } else {
+                recommendation = "\(winner) is the recommended option based on weighted fit across your top criteria."
+            }
         }
 
-        let nextStep = hardViolationOnWinner
-            ? "Resolve the hard-constraint gap (or remove the option) before making the final choice."
-            : "Validate the top uncertainty this week, then finalize on a fixed decision date."
+        let nextStep: String
+        if hardViolationOnWinner {
+            nextStep = "Resolve the hard-constraint gap for \(winner) before making the final choice."
+        } else if isHiringContext(draft.contextNarrative) {
+            let criterion = decisive?.name ?? "role fit"
+            nextStep = "Run a 30-minute trial task and one reference check for \(winner), focused on \(criterion.lowercased())."
+        } else if isCareerContext(draft.contextNarrative) {
+            nextStep = "Book a scope/compensation validation call this week, then decide between \(winner) and \(runnerUp)."
+        } else if draft.usageContext == .work {
+            let criterion = decisive?.name ?? "the top criterion"
+            nextStep = "Run a short pilot this week to verify \(criterion.lowercased()) before committing."
+        } else {
+            nextStep = "Run one concrete validation step in 7 days, then finalize between \(winner) and \(runnerUp)."
+        }
 
         return RecommendationSummary(text: recommendation, nextStep: nextStep)
+    }
+
+    private func decisiveCriterion(in draft: RankingDraft, result: RankingResult) -> (name: String, winnerScore: Double, runnerScore: Double, weightedImpact: Double)? {
+        guard let winnerID = result.rankedVendors.first?.vendorID,
+              let runnerID = result.rankedVendors.dropFirst().first?.vendorID else {
+            return nil
+        }
+
+        let ranked = draft.criteria.compactMap { criterion -> (name: String, winnerScore: Double, runnerScore: Double, weightedImpact: Double)? in
+            let winnerScore = draft.scores.first(where: { $0.vendorID == winnerID && $0.criterionID == criterion.id })?.score ?? 0
+            let runnerScore = draft.scores.first(where: { $0.vendorID == runnerID && $0.criterionID == criterion.id })?.score ?? 0
+            let weightedImpact = (winnerScore - runnerScore) * (criterion.weightPercent / 100)
+            return (criterion.name, winnerScore, runnerScore, weightedImpact)
+        }
+            .sorted { $0.weightedImpact > $1.weightedImpact }
+
+        return ranked.first
+    }
+
+    private func isHiringContext(_ context: String) -> Bool {
+        let lower = context.lowercased()
+        return lower.contains("candidate") || lower.contains("hire") || lower.contains("recruit")
+    }
+
+    private func isCareerContext(_ context: String) -> Bool {
+        let lower = context.lowercased()
+        return lower.contains("job") || lower.contains("offer") || lower.contains("salary") || lower.contains("career")
     }
 
     private func comparable(_ text: String) -> String {

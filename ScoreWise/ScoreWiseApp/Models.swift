@@ -537,19 +537,32 @@ struct BiasChallengeResponse: Codable, Hashable, Identifiable {
     var type: BiasChallengeType
     var question: String
     var response: String
+    var quickPickOptions: [String]
+    var selectedQuickPick: String?
 
     enum CodingKeys: String, CodingKey {
         case id
         case type
         case question
         case response
+        case quickPickOptions
+        case selectedQuickPick
     }
 
-    init(id: String = UUID().uuidString, type: BiasChallengeType, question: String, response: String) {
+    init(
+        id: String = UUID().uuidString,
+        type: BiasChallengeType,
+        question: String,
+        response: String,
+        quickPickOptions: [String] = [],
+        selectedQuickPick: String? = nil
+    ) {
         self.id = id
         self.type = type
         self.question = question
         self.response = response
+        self.quickPickOptions = quickPickOptions
+        self.selectedQuickPick = selectedQuickPick
     }
 
     init(from decoder: Decoder) throws {
@@ -558,7 +571,32 @@ struct BiasChallengeResponse: Codable, Hashable, Identifiable {
         type = try container.decode(BiasChallengeType.self, forKey: .type)
         question = try container.decode(String.self, forKey: .question)
         response = try container.decodeIfPresent(String.self, forKey: .response) ?? ""
+        quickPickOptions = try container.decodeIfPresent([String].self, forKey: .quickPickOptions) ?? []
+        selectedQuickPick = try container.decodeIfPresent(String.self, forKey: .selectedQuickPick)
     }
+}
+
+struct UnifiedDecisionContext: Codable, Hashable {
+    var decisionNarrative: String
+    var conversationTranscript: [String]
+    var clarifyingAnswers: [ClarifyingQuestionAnswer]
+    var options: [DecisionOptionSnapshot]
+    var constraints: [ConstraintFinding]
+    var criteria: [CriterionDraft]
+    var scores: [ScoreDraft]
+    var biasChallenges: [BiasChallengeResponse]
+    var attachmentEvidence: [String]
+    var challengeResponsesSummary: [String]
+    var attachmentsSummary: [String]
+    var knowledgeCitations: [EvidenceCitation]
+}
+
+struct DecisionFollowUpCheckpoint: Codable, Hashable, Identifiable {
+    var id: String = UUID().uuidString
+    var title: String
+    var dueDate: Date
+    var completedAt: Date?
+    var notes: String
 }
 
 struct VendorDraft: Identifiable, Hashable, Codable {
@@ -614,6 +652,9 @@ struct RankingDraft: Identifiable, Hashable, Codable {
     var decisionStatus: DecisionStatus
     var chosenOptionID: String?
     var followUpDate: Date?
+    var followUpCheckpoints: [DecisionFollowUpCheckpoint] = []
+    var followUpDeltaGuidance: String?
+    var unifiedContext: UnifiedDecisionContext?
     var outcomeRating: Int?
     var outcomeNotes: String
     var lastUpdatedAt: Date
@@ -653,6 +694,9 @@ struct RankingDraft: Identifiable, Hashable, Codable {
             decisionStatus: .inProgress,
             chosenOptionID: nil,
             followUpDate: nil,
+            followUpCheckpoints: [],
+            followUpDeltaGuidance: nil,
+            unifiedContext: nil,
             outcomeRating: nil,
             outcomeNotes: "",
             lastUpdatedAt: .now
@@ -686,6 +730,9 @@ struct InsightReportDraft: Hashable {
     var riskFlags: [String]
     var overlookedStrategicPoints: [String]
     var sensitivityFindings: [String]
+    var drivers: [String]? = nil
+    var confidenceLabel: String? = nil
+    var nextStep: String? = nil
     var citations: [EvidenceCitation] = []
 }
 
